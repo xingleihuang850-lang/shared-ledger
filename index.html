@@ -574,6 +574,22 @@ body {
   100% { opacity:0; transform:translateY(100vh) rotate(1080deg) scale(0); }
 }
 
+/* ===== CSV 导入预览 ===== */
+.csv-preview { max-height:200px; overflow-y:auto; margin-top:12px; }
+.csv-preview table { width:100%; font-size:12px; border-collapse:collapse; }
+.csv-preview th,.csv-preview td { padding:6px 8px; text-align:left; border-bottom:1px solid var(--border); }
+.csv-preview th { color:var(--text2); font-weight:600; position:sticky; top:0; background:var(--card); }
+.csv-preview .txn-ok { color:var(--success); }
+.csv-preview .txn-skip { color:var(--text3); text-decoration: line-through; }
+
+/* ===== 同步状态 ===== */
+.sync-status { display:flex; align-items:center; gap:8px; padding:10px 14px; border-radius:12px; margin-bottom:12px; font-size:12px; }
+.sync-status.ok { background: #E8F8F5; color:var(--success); }
+.sync-status.warn { background: #FFF3E0; color:#E65100; }
+.sync-status.err { background: #FFEBEE; color:var(--danger); }
+.sync-spinner { width:16px; height:16px; border:2px solid var(--border); border-top-color:var(--primary); border-radius:50%; animation:spin 0.8s linear infinite; }
+@keyframes spin { to{transform:rotate(360deg);} }
+
 /* ===== 响应式 ===== */
 @media (min-width:768px) {
   body { max-width:480px; margin:0 auto; }
@@ -745,9 +761,19 @@ body {
       <span class="s-arrow">›</span>
     </div>
     <div class="setting-item" onclick="App.importData()">
-      <div class="left"><span class="s-icon">📥</span><span class="s-label">导入数据</span></div>
+      <div class="left"><span class="s-icon">📥</span><span class="s-label">导入数据 (JSON)</span></div>
       <span class="s-arrow">›</span>
     </div>
+    <div class="setting-item" onclick="App.importBillCSV()">
+      <div class="left"><span class="s-icon">🧾</span><span class="s-label">导入支付宝/微信账单 (CSV)</span></div>
+      <span class="s-arrow">›</span>
+    </div>
+    <div class="setting-item" onclick="App.showSyncModal()">
+      <div class="left"><span class="s-icon">☁️</span><span class="s-label">跨设备同步</span></div>
+      <span class="s-arrow">›</span>
+    </div>
+    <input type="file" id="csvFileInput" accept=".csv" style="display:none" onchange="App.handleCSVFile(event)">
+    <input type="file" id="jsonFileInput" accept=".json" style="display:none" onchange="App.handleJSONFile(event)">
     <div class="setting-item" onclick="App.clearAll()">
       <div class="left"><span class="s-icon">🗑️</span><span class="s-label">清空所有数据</span></div>
       <span class="s-arrow" style="color:var(--danger)">›</span>
@@ -809,16 +835,30 @@ body {
   </div>
 </div>
 
+<!-- 同步弹窗 -->
+<div class="modal-overlay" id="syncModal">
+  <div class="modal"><div class="modal-handle"></div><div class="modal-title">☁️ 跨设备同步</div>
+    <p style="font-size:12px;color:var(--text2);margin:0 0 12px">用 GitHub Gist 同步数据，手机电脑都能记账。需要 GitHub Token（只需 gist 权限）。</p>
+    <div id="syncStatus"></div>
+    <div class="form-group"><label class="form-label">GitHub Token</label><input class="form-input" id="syncToken" type="password" placeholder="ghp_..."><button class="btn btn-outline" style="margin-top:6px;font-size:12px;padding:4px 12px" onclick="window.open('https://github.com/settings/tokens/new?description=SharedLedgerSync&scopes=gist','_blank')">📋 创建 Token</button></div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn btn-primary" style="flex:1" onclick="App.pushSync()">📤 上传数据</button>
+      <button class="btn btn-primary" style="flex:1" onclick="App.pullSync()">📥 下载数据</button>
+    </div>
+    <button class="btn btn-outline" style="margin-top:8px;width:100%" onclick="App.closeModal('syncModal')">关闭</button>
+  </div>
+</div>
+
 <script>
 // ========== 数据 ==========
-const DB_NAME='sharedLedger'; const DB_VER=3;
+const DB_NAME='sharedLedger'; const DB_VER=4;
 const DEFAULT_EXPENSE_CATS=[{id:'e1',name:'餐饮',icon:'🍜',type:'expense'},{id:'e2',name:'交通',icon:'🚗',type:'expense'},{id:'e3',name:'购物',icon:'🛍️',type:'expense'},{id:'e4',name:'住房',icon:'🏠',type:'expense'},{id:'e5',name:'娱乐',icon:'🎮',type:'expense'},{id:'e6',name:'医疗',icon:'💊',type:'expense'},{id:'e7',name:'教育',icon:'📚',type:'expense'},{id:'e8',name:'通讯',icon:'📱',type:'expense'},{id:'e9',name:'日用',icon:'🧴',type:'expense'},{id:'e10',name:'其他',icon:'❓',type:'expense'}];
 const DEFAULT_INCOME_CATS=[{id:'i1',name:'工资',icon:'💼',type:'income'},{id:'i2',name:'兼职',icon:'💡',type:'income'},{id:'i3',name:'红包',icon:'🧧',type:'income'},{id:'i4',name:'理财',icon:'📈',type:'income'},{id:'i5',name:'其他',icon:'❓',type:'income'}];
 const USER_COLORS=['#E17055','#00B894','#0984E3','#6C5CE7','#FDCB6E','#E84393','#00CEC9','#D63031'];
 
 // ========== IndexedDB ==========
 let db;
-function openDB(){return new Promise((r,j)=>{const q=indexedDB.open(DB_NAME,DB_VER);q.onupgradeneeded=e=>{const d=e.target.result;['transactions','categories','users','settings'].forEach(s=>{if(!d.objectStoreNames.contains(s))d.createObjectStore(s,{keyPath:'id'});});};q.onsuccess=e=>{db=e.target.result;r(db);};q.onerror=()=>j(q.error);});}
+function openDB(){return new Promise((r,j)=>{const q=indexedDB.open(DB_NAME,DB_VER);q.onupgradeneeded=e=>{const d=e.target.result;['transactions','categories','users','settings','badges','wishes'].forEach(s=>{if(!d.objectStoreNames.contains(s))d.createObjectStore(s,{keyPath:'id'});});};q.onsuccess=e=>{db=e.target.result;r(db);};q.onerror=()=>j(q.error);});}
 function dbPut(s,d){return new Promise((r,j)=>{const t=db.transaction(s,'readwrite'),o=t.objectStore(s);o.put(d);t.oncomplete=()=>r();t.onerror=()=>j(t.error);});}
 function dbGetAll(s){return new Promise((r,j)=>{const t=db.transaction(s,'readonly'),o=t.objectStore(s),q=o.getAll();q.onsuccess=()=>r(q.result);q.onerror=()=>j(q.error);});}
 function dbGet(s,k){return new Promise((r,j)=>{const t=db.transaction(s,'readonly'),o=t.objectStore(s),q=o.get(k);q.onsuccess=()=>r(q.result);q.onerror=()=>j(q.error);});}
@@ -1212,6 +1252,133 @@ const App = {
   async exportData(){const txns=await dbGetAll('transactions'),cats=await dbGetAll('categories'),users=await dbGetAll('users'),settings=await dbGetAll('settings'),data=JSON.stringify({transactions:txns,categories:cats,users,settings},null,2),blob=new Blob([data],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`账本备份_${new Date().toISOString().slice(0,10)}.json`;a.click();URL.revokeObjectURL(url);this.toast('导出成功');},
   importData(){const input=document.createElement('input');input.type='file';input.accept='.json';input.onchange=async e=>{const f=e.target.files[0];if(!f)return;const t=await f.text();try{const d=JSON.parse(t);if(d.transactions)for(const x of d.transactions)await dbPut('transactions',x);if(d.categories)for(const x of d.categories)await dbPut('categories',x);if(d.users)for(const x of d.users)await dbPut('users',x);if(d.settings)for(const x of d.settings)await dbPut('settings',x);await this.initUsers();this.render();this.renderCats();this.toast('数据导入成功');}catch{this.toast('导入失败，文件格式不正确');}};input.click();},
   async clearAll(){if(!confirm('⚠️ 确定要清空所有数据吗？此操作不可恢复！'))return;await dbClear('transactions');await dbClear('categories');for(const c of[...DEFAULT_EXPENSE_CATS,...DEFAULT_INCOME_CATS])await dbPut('categories',c);this.render();this.renderCats();this.toast('数据已清空');},
+
+  // ---- CSV 账单导入 ----
+  importBillCSV(){document.getElementById('csvFileInput').click();},
+  async handleCSVFile(e){const f=e.target.files[0];if(!f)return;e.target.value='';const t=await f.text();if(!t){this.toast('文件为空');return;}
+    const rows=this.parseCSV(t);if(!rows||rows.length===0){this.toast('未能识别 CSV 格式，请确认是支付宝或微信账单');return;}
+    const type=this.detectCSVType(rows[0]);let txns=[];let skipped=0;
+    if(type==='alipay') txns=this.parseAlipayCSV(rows);else if(type==='wechat') txns=this.parseWechatCSV(rows);else {this.toast('未能识别账单类型，请确认是支付宝或微信导出的 CSV');return;}
+    if(txns.length===0){this.toast('未发现有效交易记录');return;}
+    // 去重：按日期+金额+描述
+    const existing=await dbGetAll('transactions');const existSet=new Set(existing.map(x=>`${x.date}|${x.amount.toFixed(2)}|${x.note||''}`));
+    const newTxns=txns.filter(x=>!existSet.has(`${x.date}|${x.amount.toFixed(2)}|${x.note||''}`));
+    skipped=txns.length-newTxns.length;
+    let imported=0;const cats=await this.getCategories();
+    for(const txn of newTxns){const typeCats=cats.filter(c=>c.type===txn.type);
+      let cat=typeCats.find(c=>c.name===txn.categoryName);
+      if(!cat)cat=typeCats.find(c=>c.id===(txn.type==='expense'?'e99':'i5'))||typeCats[0];
+      if(!cat)continue;
+      const record={id:'t'+Date.now()+'_'+Math.random().toString(36).slice(2,8),type:txn.type,amount:txn.amount,categoryId:cat.id,categoryName:cat.name,categoryIcon:cat.icon,date:txn.date,note:txn.note,mood:'',userId:this.currentUser.id,userName:this.currentUser.name,userColor:this.currentUser.color,createdAt:new Date().toISOString()};
+      await dbPut('transactions',record);imported++;}
+    this.toast(`✅ 导入 ${imported} 条${skipped>0?`，跳过 ${skipped} 条重复`:''}`);
+    this.render();this.renderCats();},
+
+  parseCSV(text){const lines=text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l&&!l.startsWith('---'));
+    const csv=[];for(const line of lines){if(!line.includes(','))continue;
+      const row=[];let cell='',inQuote=false;
+      for(let i=0;i<line.length;i++){const ch=line[i];
+        if(ch==='"'){if(inQuote&&line[i+1]==='"'){cell+='"';i++;}else{inQuote=!inQuote;}}
+        else if(ch===','&&!inQuote){row.push(cell.trim());cell='';}
+        else{cell+=ch;}}
+      row.push(cell.trim());csv.push(row);}
+    if(csv.length===0)return null;
+    // Strip BOM
+    if(csv[0][0]&&csv[0][0].charCodeAt(0)===0xFEFF)csv[0][0]=csv[0][0].slice(1);
+    return csv;},
+
+  detectCSVType(row){const joined=row.join(',');if(joined.includes('支付宝')||joined.includes('交易号')||joined.includes('交易创建时间'))return 'alipay';
+    if(joined.includes('微信')||joined.includes('微信支付')||(row.length>=9&&row[0]==='交易时间'))return 'wechat';return 'unknown';},
+
+  parseAlipayCSV(rows){let headerIdx=-1;
+    for(let i=0;i<rows.length;i++){if(rows[i][0]==='交易号'){headerIdx=i;break;}}
+    if(headerIdx===-1){this.toast('未找到支付宝账单表头');return [];}
+    const h=rows[headerIdx];
+    const cId=h.indexOf('交易创建时间'),cOther=h.indexOf('交易对方'),cGoods=h.indexOf('商品名称'),cAmt=h.indexOf('金额(元)'),cDir=h.indexOf('收/支'),cNote=Math.max(h.indexOf('备注'),-1);
+    if(cId===-1||cAmt===-1||cDir===-1){this.toast('支付宝账单格式不匹配');return [];}
+    const txns=[];
+    for(let i=headerIdx+1;i<rows.length;i++){const r=rows[i];if(r.length<=Math.max(cId,cAmt,cDir))continue;
+      const dir=(r[cDir]||'').trim();if(dir!=='支出'&&dir!=='收入')continue;
+      const amt=parseFloat(r[cAmt]);if(isNaN(amt)||amt<=0)continue;
+      const dateStr=r[cId]?r[cId].split(' ')[0]:'';if(!dateStr||!dateStr.includes('-'))continue;
+      const other=cOther!==-1?r[cOther]||'':'',goods=cGoods!==-1?r[cGoods]||'':'',note=cNote!==-1?r[cNote]||'':'';
+      let cat='购物';if(dir==='收入')cat='其他';
+      else{const desc=(goods+other).toLowerCase();
+        if(desc.includes('餐')||desc.includes('饭')||desc.includes('外卖')||desc.includes('美团')||desc.includes('饿了吗')||desc.includes('食')||desc.includes('饮'))cat='餐饮';
+        else if(desc.includes('公交')||desc.includes('地铁')||desc.includes('打车')||desc.includes('滴滴')||desc.includes('高铁')||desc.includes('火车')||desc.includes('飞机')||desc.includes('加油')||desc.includes('停车'))cat='交通';
+        else if(desc.includes('电影')||desc.includes('游戏')||desc.includes('视频')||desc.includes('会员'))cat='娱乐';
+        else if(desc.includes('超市')||desc.includes('便利店')||desc.includes('淘宝')||desc.includes('京东')||desc.includes('拼多多'))cat='购物';
+        else if(desc.includes('医院')||desc.includes('药')||desc.includes('诊所')||desc.includes('健身'))cat='医疗';
+        else if(desc.includes('房租')||desc.includes('水电')||desc.includes('物业')||desc.includes('话费')||desc.includes('网费'))cat='住房';
+        else if(desc.includes('手机')||desc.includes('电脑')||desc.includes('数码'))cat='数码';}
+      const noteStr=[other,goods,note].filter(Boolean).join(' · ').slice(0,100);
+      txns.push({type:dir==='收入'?'income':'expense',amount:amt,date:dateStr,note:noteStr||'支付宝账单',categoryName:cat});}
+    return txns;},
+
+  parseWechatCSV(rows){let headerIdx=-1;
+    for(let i=0;i<rows.length;i++){if(rows[i][0]==='交易时间'){headerIdx=i;break;}}
+    if(headerIdx===-1){this.toast('未找到微信账单表头');return [];}
+    const h=rows[headerIdx];
+    const cTime=h.indexOf('交易时间'),cType=h.indexOf('交易类型'),cOther=h.indexOf('交易对方'),cGoods=h.indexOf('商品'),cDir=h.indexOf('收/支'),cAmt=h.indexOf('金额(元)'),cNote=Math.max(h.indexOf('备注'),-1);
+    if(cTime===-1||cAmt===-1||cDir===-1){this.toast('微信账单格式不匹配');return [];}
+    const txns=[];
+    for(let i=headerIdx+1;i<rows.length;i++){const r=rows[i];if(r.length<=Math.max(cTime,cAmt,cDir))continue;
+      const dir=(r[cDir]||'').trim();if(dir!=='支出'&&dir!=='收入')continue;
+      const amt=parseFloat(r[cAmt].replace(/[¥￥,]/g,''));if(isNaN(amt)||amt<=0)continue;
+      const dateStr=r[cTime]?r[cTime].split(' ')[0]:'';if(!dateStr||!dateStr.includes('-'))continue;
+      const other=cOther!==-1?r[cOther]||'':'',goods=cGoods!==-1?r[cGoods]||'':'',note=cNote!==-1?r[cNote]||'':'';
+      let cat='购物';if(dir==='收入')cat='其他';
+      else{const desc=(goods+other).toLowerCase();
+        if(desc.includes('餐')||desc.includes('饭')||desc.includes('外卖')||desc.includes('美团')||desc.includes('饿了吗')||desc.includes('食')||desc.includes('饮'))cat='餐饮';
+        else if(desc.includes('公交')||desc.includes('地铁')||desc.includes('打车')||desc.includes('滴滴')||desc.includes('高铁')||desc.includes('火车')||desc.includes('飞机')||desc.includes('加油')||desc.includes('停车'))cat='交通';
+        else if(desc.includes('电影')||desc.includes('游戏')||desc.includes('视频')||desc.includes('会员'))cat='娱乐';
+        else if(desc.includes('超市')||desc.includes('便利店')||desc.includes('淘宝')||desc.includes('京东')||desc.includes('拼多多'))cat='购物';
+        else if(desc.includes('医院')||desc.includes('药')||desc.includes('诊所')||desc.includes('健身'))cat='医疗';
+        else if(desc.includes('房租')||desc.includes('水电')||desc.includes('物业')||desc.includes('话费')||desc.includes('网费'))cat='住房';
+        else if(desc.includes('手机')||desc.includes('电脑')||desc.includes('数码'))cat='数码';}
+      const noteStr=[other,goods,note].filter(Boolean).join(' · ').slice(0,100);
+      txns.push({type:dir==='收入'?'income':'expense',amount:amt,date:dateStr,note:noteStr||'微信账单',categoryName:cat});}
+    return txns;},
+
+  // ---- GitHub Gist 跨设备同步 ----
+  showSyncModal(){const el=document.getElementById('syncToken');const saved=localStorage.getItem('ledgerSyncToken');if(saved)el.value=saved;this.renderSyncStatus();this.openModal('syncModal');},
+  renderSyncStatus(){const s=document.getElementById('syncStatus');const hasToken=!!localStorage.getItem('ledgerSyncToken');const gistId=localStorage.getItem('ledgerGistId');const last=localStorage.getItem('ledgerSyncTime');
+    if(!hasToken||!gistId){s.innerHTML='<div class="sync-status warn">🔧 请先输入 GitHub Token 并创建 Gist</div>';return;}
+    let html='<div class="sync-status ok">✅ 已就绪';if(last)html+=' · 上次同步：'+last;html+='</div>';s.innerHTML=html;},
+
+  async githubAPI(url,opts={}){const token=localStorage.getItem('ledgerSyncToken');if(!token){this.toast('请先输入 GitHub Token');return null;}
+    const headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github.v3+json',...opts.headers};if(opts.body){headers['Content-Type']='application/json';}
+    try{const r=await fetch(url,{method:opts.method||'GET',headers,body:opts.body?JSON.stringify(opts.body):undefined});if(!r.ok){const e=await r.json().catch(()=>({}));this.toast('GitHub API 错误: '+(e.message||r.status));return null;}return await r.json();}catch(e){this.toast('网络错误: '+(e.message||'连接失败'));return null;}},
+
+  async getGistId(){let gistId=localStorage.getItem('ledgerGistId');if(gistId)return gistId;
+    const data=await this.collectAllData();
+    const gist=await this.githubAPI('https://api.github.com/gists',{method:'POST',body:{description:'Shared Ledger 账本数据同步',public:false,files:{'ledger_data.json':{content:JSON.stringify(data)}}}});if(!gist||!gist.id)return null;localStorage.setItem('ledgerGistId',gist.id);this.toast('📦 同步仓库已创建');return gist.id;},
+
+  async collectAllData(){return{transactions:await dbGetAll('transactions'),categories:await dbGetAll('categories'),users:await dbGetAll('users'),settings:await dbGetAll('settings'),badges:await dbGetAll('badges'),wishes:await dbGetAll('wishes'),syncVersion:Date.now()};},
+
+  async pushSync(){if(!this.currentUser){this.toast('请先选择用户');return;}const token=localStorage.getItem('ledgerSyncToken');
+    if(!token){const t=document.getElementById('syncToken').value.trim();if(!t){this.toast('请输入 GitHub Token');return;}localStorage.setItem('ledgerSyncToken',t);}
+    const gistId=await this.getGistId();if(!gistId)return;
+    const data=await this.collectAllData();const gist=await this.githubAPI('https://api.github.com/gists/'+gistId,{method:'PATCH',body:{files:{'ledger_data.json':{content:JSON.stringify(data)}}}});
+    if(!gist)return;const now=new Date().toLocaleString('zh-CN');localStorage.setItem('ledgerSyncTime',now);
+    this.toast('☁️ 数据已上传 ('+data.transactions.length+' 条记录)');this.renderSyncStatus();},
+
+  async pullSync(){if(!this.currentUser){this.toast('请先选择用户');return;}const token=localStorage.getItem('ledgerSyncToken');
+    if(!token){const t=document.getElementById('syncToken').value.trim();if(!t){this.toast('请输入 GitHub Token');return;}localStorage.setItem('ledgerSyncToken',t);}
+    const gistId=await this.getGistId();if(!gistId)return;
+    const gist=await this.githubAPI('https://api.github.com/gists/'+gistId);if(!gist||!gist.files||!gist.files['ledger_data.json'])return;
+    try{const d=JSON.parse(gist.files['ledger_data.json'].content);
+      if(!confirm(`⚠️ 将用云端数据覆盖本地数据。\n云端有 ${d.transactions?.length||0} 条记录。\n本地的所有修改将丢失！\n\n确定继续？`))return;
+      await dbClear('transactions');await dbClear('categories');await dbClear('users');await dbClear('settings');await dbClear('badges');await dbClear('wishes');
+      for(const x of d.transactions||[])await dbPut('transactions',x);
+      for(const x of d.categories||[])await dbPut('categories',x);
+      for(const x of d.users||[])await dbPut('users',x);
+      for(const x of d.settings||[])await dbPut('settings',x);
+      for(const x of d.badges||[])await dbPut('badges',x);
+      for(const x of d.wishes||[])await dbPut('wishes',x);
+      const now=new Date().toLocaleString('zh-CN');localStorage.setItem('ledgerSyncTime',now);
+      await this.initUsers();this.render();this.renderCats();this.renderSyncStatus();
+      this.toast(`✅ 同步完成 (${d.transactions?.length||0} 条记录)`);}catch(e){this.toast('同步失败: 数据格式异常');}},
 
   // ---- 弹窗 ----
   openModal(id){const el=document.getElementById(id);el.classList.add('show');el.style.opacity='0';requestAnimationFrame(()=>{el.style.opacity='1';});},
