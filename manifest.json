@@ -1,0 +1,18 @@
+{
+  "name": "共享账本",
+  "short_name": "账本",
+  "description": "多人共享记账 · 阿奇 🔍",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#F5F5F0",
+  "theme_color": "#2D3436",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%232D3436'/><text y='.65em' font-size='60' text-anchor='middle' x='50'>📒</text></svg>",
+      "sizes": "100x100",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
