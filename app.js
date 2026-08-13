@@ -180,13 +180,15 @@ const Particles = {
  * @returns {string}
  */
 function catIconHtml(cat, size = '24px') {
+  const icon = cat ? escapeHtml(cat.icon || '📌') : '📌';
   if (cat && cat.iconImg) {
-    return `<img src="${cat.iconImg}" alt="${cat.icon || ''}"
+    const img = escapeHtml(cat.iconImg);
+    return `<img src="${img}" alt="${icon}"
                style="width:${size};height:${size};object-fit:contain;border-radius:4px;vertical-align:middle"
                onerror="this.style.display='none';this.nextSibling.style.display='inline'">` +
-           `<span style="display:none">${cat.icon || '📌'}</span>`;
+           `<span style="display:none">${icon}</span>`;
   }
-  return cat ? (cat.icon || '📌') : '📌';
+  return icon;
 }
 
 /**
@@ -230,7 +232,7 @@ function guessCategoryFromDesc(desc, dir) {
   if (dir === '收入') return '其他';
   const d = desc.toLowerCase();
   if (d.includes('餐') || d.includes('饭') || d.includes('外卖') ||
-      d.includes('美团') || d.includes('饿了吗') || d.includes('食') || d.includes('饮')) return '餐饮';
+      d.includes('美团') || d.includes('饿了么') || d.includes('饿了吗') || d.includes('食') || d.includes('饮')) return '餐饮';
   if (d.includes('公交') || d.includes('地铁') || d.includes('打车') ||
       d.includes('滴滴') || d.includes('高铁') || d.includes('火车') ||
       d.includes('飞机') || d.includes('加油') || d.includes('停车'))  return '交通';
@@ -240,8 +242,41 @@ function guessCategoryFromDesc(desc, dir) {
   if (d.includes('医院') || d.includes('药') || d.includes('诊所') || d.includes('健身')) return '医疗';
   if (d.includes('房租') || d.includes('水电') || d.includes('物业') ||
       d.includes('话费') || d.includes('网费'))                         return '住房';
-  if (d.includes('手机') || d.includes('电脑') || d.includes('数码'))   return '数码';
+  if (d.includes('手机') || d.includes('电脑') || d.includes('数码'))   return '购物';
   return '购物';
+}
+
+/**
+ * HTML 转义，防止 XSS 注入。
+ * 所有拼进 innerHTML 的用户输入（用户名/分类名/备注/地点等）都必须经过此函数。
+ * @param {*} value - 任意值
+ * @returns {string} 转义后的安全字符串
+ */
+function escapeHtml(value) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * 将 Date 对象格式化为本地日期 YYYY-MM-DD。
+ * 不能用 toISOString().slice(0,10)，因为 toISOString 返回 UTC 时间，
+ * 在东八区凌晨会导致日期偏移一天（甚至定期任务死循环）。
+ */
+function formatLocalDate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** 返回今天的本地日期字符串 YYYY-MM-DD */
+function todayStr() {
+  return formatLocalDate(new Date());
 }
 
 // ======================== 主应用 ========================
@@ -444,8 +479,8 @@ const App = {
     list.innerHTML = users.map(u => `
       <div class="user-item ${u.id === this.currentUser.id ? 'active' : ''}"
            onclick="App.switchUser('${u.id}')">
-        <div class="user-avatar" style="background:${u.color}">${u.name[0]}</div>
-        <span class="user-name">${u.name}</span>
+        <div class="user-avatar" style="background:${escapeHtml(u.color)}">${escapeHtml(u.name[0] || '?')}</div>
+        <span class="user-name">${escapeHtml(u.name)}</span>
       </div>`
     ).join('');
     this.openModal('userModal');
@@ -470,7 +505,7 @@ const App = {
       grid.innerHTML = filtered.map(c => `
         <div class="cat-chip ${this.currentCat === c.id ? 'selected' : ''}"
              onclick="App.selectCat('${c.id}')">
-          <span class="cat-chip-icon">${catIconHtml(c, '20px')}</span><span class="cat-label">${c.name}</span>
+          <span class="cat-chip-icon">${catIconHtml(c, '20px')}</span><span class="cat-label">${escapeHtml(c.name)}</span>
         </div>`
       ).join('');
     });
@@ -496,7 +531,7 @@ const App = {
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
         <span style="display:flex;align-items:center;gap:8px">
           <span class="cat-mgr-icon">${catIconHtml(c, '28px')}</span>
-          <span>${c.name} <small style="color:var(--text3)">${c.type === 'expense' ? '支出' : '收入'}</small></span>
+          <span>${escapeHtml(c.name)} <small style="color:var(--text3)">${c.type === 'expense' ? '支出' : '收入'}</small></span>
         </span>
         <div style="display:flex;gap:6px">
           <button class="btn btn-outline" style="width:auto;padding:5px 10px;font-size:12px"
@@ -616,7 +651,7 @@ const App = {
 
   // ======================== 记账 ========================
   setTodayDate() {
-    document.getElementById('addDate').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('addDate').value = todayStr();
   },
 
   selectMood(mood, el) {
@@ -719,7 +754,7 @@ const App = {
         let maxStreak = 0, cur = 0;
         const day = new Date();
         for (let i = 0; i < 60; i++) {
-          const ds = day.toISOString().slice(0, 10);
+          const ds = formatLocalDate(day);
           if (dates.has(ds)) { cur++; maxStreak = Math.max(maxStreak, cur); }
           else                 { cur = 0; }
           day.setDate(day.getDate() - 1);
@@ -859,12 +894,12 @@ const App = {
       const emoji     = pct >= 100 ? '🎉' : pct >= 50 ? '💪' : pct >= 25 ? '🔥' : '💤';
       return `
         <div class="wish-item"
-             data-wish-id="${w.id}"
-             data-wish-name="${w.name.replace(/"/g, '&quot;')}"
+             data-wish-id="${escapeHtml(w.id)}"
+             data-wish-name="${escapeHtml(w.name)}"
              onclick="App._onWishClick(event, this)">
-          <div class="wish-icon">${w.icon}</div>
+          <div class="wish-icon">${escapeHtml(w.icon)}</div>
           <div class="wish-info">
-            <div class="w-name">${w.name}</div>
+            <div class="w-name">${escapeHtml(w.name)}</div>
             <div class="w-progress">
               ¥${savedAmt} / ¥${w.target}${pct >= 100 ? ' ✅ 已达成！' : ''}
             </div>
@@ -1012,7 +1047,7 @@ const App = {
   /** 在 init 时调用：自动补生成所有逾期定期记录 */
   async processRecurring() {
     const items = await this.getRecurring();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayStr();
     const records = [];
 
     for (const item of items) {
@@ -1085,7 +1120,7 @@ const App = {
     } else {
       return null;
     }
-    return d.toISOString().slice(0, 10);
+    return formatLocalDate(d);
   },
 
   /** 打开定期收支管理弹窗 */
@@ -1102,7 +1137,7 @@ const App = {
         return `
           <div class="recurring-item" style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)">
             <div>
-              <div style="font-weight:600">${item.categoryIcon || '📅'} ${item.name}</div>
+              <div style="font-weight:600">${escapeHtml(item.categoryIcon || '📅')} ${escapeHtml(item.name)}</div>
               <div style="font-size:12px;color:var(--text3)">${freqLabel} · ${typeLabel} · ¥${item.amount}</div>
             </div>
             <div style="display:flex;gap:6px;align-items:center">
@@ -1120,7 +1155,7 @@ const App = {
     // 填充分类选项
     const catSel = document.getElementById('newRecurCat');
     catSel.innerHTML = cats.map(c =>
-      `<option value="${c.id}" data-icon="${c.icon}" data-name="${c.name}">${c.icon} ${c.name}</option>`
+      `<option value="${escapeHtml(c.id)}" data-icon="${escapeHtml(c.icon)}" data-name="${escapeHtml(c.name)}">${escapeHtml(c.icon)} ${escapeHtml(c.name)}</option>`
     ).join('');
 
     this.openModal('recurringModal');
@@ -1147,7 +1182,7 @@ const App = {
       categoryId:   catId,
       categoryName: selOpt ? selOpt.dataset.name : '',
       categoryIcon: selOpt ? selOpt.dataset.icon : '📅',
-      startDate:    new Date().toISOString().slice(0, 10),
+      startDate:    todayStr(),
       lastGenDate:  '',
       enabled:      true,
     };
@@ -1182,7 +1217,8 @@ const App = {
       ? all.filter(t => t.userId === this.currentUser.id)
       : all;
     return result.sort(
-      (a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt)
+      (a, b) => (b.date || '').localeCompare(a.date || '')
+        || (b.createdAt || '').localeCompare(a.createdAt || '')
     );
   },
 
@@ -1342,9 +1378,9 @@ const App = {
               ${catIconHtml({ icon: t.categoryIcon, iconImg: t.categoryIconImg }, '22px')}
             </div>
             <div class="txn-info">
-              <div class="txn-cat">${t.categoryName} ${t.mood || ''}${ss.active ? `<span class="txn-date-tag">${t.date}</span>` : ''}</div>
+              <div class="txn-cat">${escapeHtml(t.categoryName)} ${escapeHtml(t.mood || '')}${ss.active ? `<span class="txn-date-tag">${escapeHtml(t.date)}</span>` : ''}</div>
               <div class="txn-meta">
-                ${t.date.slice(5)} · ${t.userName}${t.note ? ' · ' + t.note : ''}
+                ${escapeHtml(t.date.slice(5))} · ${escapeHtml(t.userName)}${t.note ? ' · ' + escapeHtml(t.note) : ''}
               </div>
             </div>
           </div>
@@ -1398,7 +1434,7 @@ const App = {
   async openSearch() {
     const cats = await this.getCategories();
     const catOptions = cats.map(c =>
-      `<option value="${c.id}" ${this.searchState.catId === c.id ? 'selected' : ''}>${c.icon} ${c.name}</option>`
+      `<option value="${escapeHtml(c.id)}" ${this.searchState.catId === c.id ? 'selected' : ''}>${escapeHtml(c.icon)} ${escapeHtml(c.name)}</option>`
     ).join('');
     document.getElementById('searchCatOptions').innerHTML =
       `<option value="">全部分类</option>` + catOptions;
@@ -1447,6 +1483,11 @@ const App = {
 
   // ======================== 统计页 ========================
   async renderStats() {
+    // 等待 Chart.js 库加载完成
+    if (typeof Chart === 'undefined') {
+      setTimeout(() => this.renderStats(), 150);
+      return;
+    }
     const allTxns   = await this.getTransactions(true);
     const monthTxns = this.getTransactionsByMonth(
       allTxns, this.statsMonth.year, this.statsMonth.month
@@ -1560,7 +1601,7 @@ const App = {
       });
       increases.sort((a, b) => b.diff - a.diff);
       const top3 = increases.slice(0, 3)
-        .map(item => `${catIconHtml({ icon: item.icon, iconImg: item.iconImg }, '16px')}${item.name} +¥${item.diff.toFixed(0)}`)
+        .map(item => `${catIconHtml({ icon: item.icon, iconImg: item.iconImg }, '16px')}${escapeHtml(item.name)} +¥${item.diff.toFixed(0)}`)
         .join('，');
       content.innerHTML = `<div class="compare-card bad">
         <span class="cmp-emoji">😅</span>
@@ -1642,7 +1683,7 @@ const App = {
       </div>
       <div class="summary-insight" style="margin-bottom:8px">
         ${topCat.length > 0
-          ? `<div>🔝 <b>支出 TOP3：</b>${topCat.map(c => `${catIconHtml({ icon: c.icon, iconImg: c.iconImg }, '16px')}${c.name} ¥${c.amount.toFixed(0)}`).join(' &nbsp;')}</div>`
+          ? `<div>🔝 <b>支出 TOP3：</b>${topCat.map(c => `${catIconHtml({ icon: c.icon, iconImg: c.iconImg }, '16px')}${escapeHtml(c.name)} ¥${c.amount.toFixed(0)}`).join(' &nbsp;')}</div>`
           : ''}
         ${bestMonth.m > 0
           ? `<div>🏖️ <b>最省钱月：</b>${bestMonth.m}月（仅 ¥${bestMonth.amt.toFixed(0)}）</div>`
@@ -1666,6 +1707,7 @@ const App = {
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
 
     const target = document.getElementById('page-' + page);
+    if (!target) return;
     target.classList.add('active');
     target.style.opacity   = '0';
     target.style.transform = 'translateY(12px)';
@@ -1702,7 +1744,7 @@ const App = {
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
     a.href     = url;
-    a.download = `账本备份_${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `账本备份_${todayStr()}.json`;
     a.click();
     URL.revokeObjectURL(url);
     this.toast('导出成功');
@@ -1764,7 +1806,7 @@ const App = {
     wsSummary['!cols'] = [{ wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
     XLSX.utils.book_append_sheet(wb, wsSummary, '月度汇总');
 
-    XLSX.writeFile(wb, `账本_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `账本_${todayStr()}.xlsx`);
     this.toast('✅ Excel 导出成功');
   },
 
@@ -1895,7 +1937,7 @@ const App = {
         className: '',
       });
       L.marker([t.lat, t.lng], { icon })
-        .bindPopup(`<b>${t.categoryIcon} ${t.categoryName}</b><br>¥${t.amount}<br>${t.date}${t.locationName ? '<br>📍 '+t.locationName : ''}${t.note ? '<br>'+t.note : ''}`)
+        .bindPopup(`<b>${escapeHtml(t.categoryIcon)} ${escapeHtml(t.categoryName)}</b><br>¥${t.amount}<br>${escapeHtml(t.date)}${t.locationName ? '<br>📍 '+escapeHtml(t.locationName) : ''}${t.note ? '<br>'+escapeHtml(t.note) : ''}`)
         .addTo(map);
     });
 
@@ -1907,12 +1949,12 @@ const App = {
       .map(t => `
         <li class="txn-item">
           <div class="txn-left">
-            <div class="txn-icon">${t.categoryIcon}</div>
+            <div class="txn-icon">${escapeHtml(t.categoryIcon)}</div>
             <div class="txn-info">
-              <div class="txn-name">${t.categoryName}</div>
+              <div class="txn-name">${escapeHtml(t.categoryName)}</div>
               <div class="txn-meta">
-                📍 ${t.locationName || `${(+t.lat).toFixed(3)}, ${(+t.lng).toFixed(3)}`}
-                &nbsp;·&nbsp;${t.date}
+                📍 ${t.locationName ? escapeHtml(t.locationName) : `${(+t.lat).toFixed(3)}, ${(+t.lng).toFixed(3)}`}
+                &nbsp;·&nbsp;${escapeHtml(t.date)}
               </div>
             </div>
           </div>
