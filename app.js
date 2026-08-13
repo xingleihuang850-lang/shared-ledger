@@ -903,6 +903,10 @@ const App = {
     const cats = await this.getCategories();
     const cat  = cats.find(c => c.id === this.currentCat);
 
+    const locationName = document.getElementById('addLocation').value.trim();
+    const lat          = parseFloat(document.getElementById('addLat').value);
+    const lng          = parseFloat(document.getElementById('addLng').value);
+
     const txn = {
       id:              't' + Date.now(),
       type:            this.currentType,
@@ -918,12 +922,19 @@ const App = {
       userName:        this.currentUser.name,
       userColor:       this.currentUser.color,
       createdAt:       new Date().toISOString(),
+      locationName:    locationName || undefined,
+      lat:             isNaN(lat) ? undefined : lat,
+      lng:             isNaN(lng) ? undefined : lng,
     };
 
     await dbPut('transactions', txn);
 
-    document.getElementById('addAmount').value = '';
-    document.getElementById('addNote').value   = '';
+    document.getElementById('addAmount').value   = '';
+    document.getElementById('addNote').value     = '';
+    document.getElementById('addLocation').value = '';
+    document.getElementById('addLat').value      = '';
+    document.getElementById('addLng').value      = '';
+    document.getElementById('locHint').textContent = '';
     this.currentCat = null;
     this.renderCats();
 
@@ -1676,6 +1687,7 @@ const App = {
     if (page === 'home')     this.render();
     if (page === 'stats')    this.renderStats();
     if (page === 'yearly')   this.renderYearSummary();
+    if (page === 'map')      setTimeout(() => this.renderMap(), 100);
     if (page === 'add')      this.setTodayDate();
     window.scrollTo(0, 0);
   },
@@ -1697,6 +1709,213 @@ const App = {
     a.click();
     URL.revokeObjectURL(url);
     this.toast('导出成功');
+  },
+
+  // ======================== Excel 导出 ========================
+  async exportExcel() {
+    if (typeof XLSX === 'undefined') {
+      this.toast('Excel 库未加载，请刷新后重试');
+      return;
+    }
+    const txns = await this.getTransactions(true);
+    if (txns.length === 0) { this.toast('暂无数据可导出'); return; }
+
+    // 排序：日期降序
+    const sorted = [...txns].sort((a, b) => b.date.localeCompare(a.date));
+
+    const wsData = [
+      ['日期', '类型', '金额(元)', '分类', '心情', '地点', '备注', '记录人', '创建时间'],
+      ...sorted.map(t => [
+        t.date,
+        t.type === 'expense' ? '支出' : '收入',
+        t.amount,
+        t.categoryName || '',
+        t.mood || '',
+        t.locationName || '',
+        t.note || '',
+        t.userName || '',
+        t.createdAt ? t.createdAt.slice(0, 19).replace('T', ' ') : '',
+      ]),
+    ];
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    // 列宽
+    ws['!cols'] = [
+      { wch: 12 }, { wch: 6 }, { wch: 10 }, { wch: 10 },
+      { wch: 6 }, { wch: 20 }, { wch: 20 }, { wch: 8 }, { wch: 20 },
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, '账单明细');
+
+    // 月度汇总 sheet
+    const monthMap = {};
+    for (const t of sorted) {
+      const key = t.date.slice(0, 7);
+      if (!monthMap[key]) monthMap[key] = { income: 0, expense: 0 };
+      if (t.type === 'income') monthMap[key].income += t.amount;
+      else monthMap[key].expense += t.amount;
+    }
+    const summaryData = [
+      ['月份', '收入(元)', '支出(元)', '结余(元)'],
+      ...Object.entries(monthMap).sort((a, b) => b[0].localeCompare(a[0])).map(([k, v]) => [
+        k, +v.income.toFixed(2), +v.expense.toFixed(2), +(v.income - v.expense).toFixed(2),
+      ]),
+    ];
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+    wsSummary['!cols'] = [{ wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, wsSummary, '月度汇总');
+
+    XLSX.writeFile(wb, `账本_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    this.toast('✅ Excel 导出成功');
+  },
+
+  // ======================== GPS 定位 ========================
+  locateGPS() {
+    if (!navigator.geolocation) {
+      this.toast('当前浏览器不支持定位');
+      return;
+    }
+    const btn  = document.getElementById('gpsBtn');
+    const hint = document.getElementById('locHint');
+    btn.textContent = '⏳';
+    btn.disabled    = true;
+    hint.textContent = '定位中…';
+
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+        document.getElementById('addLat').value = lat.toFixed(6);
+        document.getElementById('addLng').value = lng.toFixed(6);
+        hint.textContent = `📍 ${lat.toFixed(4)}, ${lng.toFixed(4)}  精度 ±${Math.round(accuracy)}m`;
+        hint.style.color = 'var(--success)';
+        btn.textContent  = '✅';
+        btn.disabled     = false;
+        // 尝试反地理编码（Nominatim，免费无需 Key）
+        fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=zh`)
+          .then(r => r.json())
+          .then(d => {
+            if (d && d.display_name) {
+              const short = (d.address.road || d.address.suburb || d.address.city_district || '')
+                + (d.address.city || d.address.town || '');
+              const loc = document.getElementById('addLocation');
+              if (!loc.value) loc.value = short || d.display_name.split(',')[0];
+            }
+          })
+          .catch(() => {});
+      },
+      err => {
+        hint.textContent = '定位失败：' + (err.message || '未知错误');
+        hint.style.color = 'var(--danger)';
+        btn.textContent  = '📍';
+        btn.disabled     = false;
+      },
+      { timeout: 10000, maximumAge: 30000 }
+    );
+  },
+
+  // ======================== 消费地图 ========================
+  async renderMap() {
+    const filter = document.getElementById('mapTypeFilter')?.value || '';
+    let txns = await this.getTransactions(true);
+    if (filter) txns = txns.filter(t => t.type === filter);
+
+    // 有坐标的记录
+    const located = txns.filter(t => t.lat != null && t.lng != null);
+    const statsEl  = document.getElementById('mapStats');
+    const cardEl   = document.getElementById('mapTxnCard');
+    const listEl   = document.getElementById('mapTxnList');
+    const countEl  = document.getElementById('mapTxnCount');
+
+    statsEl.textContent = located.length > 0
+      ? `共 ${located.length} 条带位置记录（总 ${txns.length} 条），` +
+        `消费合计 ¥${located.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0).toFixed(2)}`
+      : `暂无带位置的记录。记账时点击 📍 按钮可自动标记当前位置。`;
+
+    const container = document.getElementById('mapContainer');
+
+    if (located.length === 0) {
+      container.innerHTML = '<div style="text-align:center;color:var(--text3);padding:48px 0;font-size:14px">📍 暂无位置数据<br><br>记账时点击「📍」按钮，<br>即可自动记录消费地点</div>';
+      cardEl.style.display = 'none';
+      return;
+    }
+
+    container.innerHTML = '';
+    container.style.height = '340px';
+    container.style.borderRadius = '12px';
+    container.style.overflow = 'hidden';
+
+    // 等待 Leaflet 加载完
+    if (typeof L === 'undefined') {
+      container.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text3)">地图库加载中，请稍候…</div>';
+      return;
+    }
+
+    // 销毁旧地图实例
+    if (this._leafletMap) {
+      this._leafletMap.remove();
+      this._leafletMap = null;
+    }
+
+    const center = [
+      located.reduce((s, t) => s + t.lat, 0) / located.length,
+      located.reduce((s, t) => s + t.lng, 0) / located.length,
+    ];
+
+    const map = L.map(container, { zoomControl: true }).setView(center, 13);
+    this._leafletMap = map;
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      maxZoom: 19,
+    }).addTo(map);
+
+    // 热力图点：[lat, lng, intensity]
+    const maxAmt = Math.max(...located.map(t => t.amount), 1);
+    const heatPoints = located.map(t => [t.lat, t.lng, t.amount / maxAmt]);
+
+    if (typeof L.heatLayer !== 'undefined') {
+      L.heatLayer(heatPoints, {
+        radius: 28, blur: 20, maxZoom: 17,
+        gradient: { 0.2: '#00B894', 0.5: '#FDCB6E', 0.8: '#E17055', 1.0: '#D63031' },
+      }).addTo(map);
+    }
+
+    // 标记点（按金额大小显示）
+    located.forEach(t => {
+      const color = t.type === 'expense' ? '#D63031' : '#00B894';
+      const r     = Math.max(8, Math.min(20, 8 + (t.amount / maxAmt) * 12));
+      const icon  = L.divIcon({
+        html: `<div style="width:${r*2}px;height:${r*2}px;border-radius:50%;background:${color};opacity:0.75;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.3)"></div>`,
+        iconSize: [r*2, r*2],
+        iconAnchor: [r, r],
+        className: '',
+      });
+      L.marker([t.lat, t.lng], { icon })
+        .bindPopup(`<b>${t.categoryIcon} ${t.categoryName}</b><br>¥${t.amount}<br>${t.date}${t.locationName ? '<br>📍 '+t.locationName : ''}${t.note ? '<br>'+t.note : ''}`)
+        .addTo(map);
+    });
+
+    // 列表
+    cardEl.style.display = '';
+    countEl.textContent  = `${located.length}条`;
+    listEl.innerHTML     = [...located]
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .map(t => `
+        <li class="txn-item">
+          <div class="txn-left">
+            <div class="txn-icon">${t.categoryIcon}</div>
+            <div class="txn-info">
+              <div class="txn-name">${t.categoryName}</div>
+              <div class="txn-meta">
+                📍 ${t.locationName || `${(+t.lat).toFixed(3)}, ${(+t.lng).toFixed(3)}`}
+                &nbsp;·&nbsp;${t.date}
+              </div>
+            </div>
+          </div>
+          <div class="txn-amount ${t.type}">${t.type==='expense'?'-':'+'}¥${t.amount.toFixed(2)}</div>
+        </li>`).join('');
   },
 
   importData() {

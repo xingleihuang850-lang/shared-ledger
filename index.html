@@ -19,6 +19,12 @@
 
   <!-- Chart.js：defer 加载，不阻塞首屏 -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
+  <!-- SheetJS：Excel 导出 -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+  <!-- Leaflet：消费地图 -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js" defer></script>
 </head>
 <body>
 
@@ -65,6 +71,12 @@
           onclick="App.switchPage('yearly',this)" aria-label="年度总结">
     <span class="icon">🎯</span>
     <span>年度</span>
+    <span class="dot"></span>
+  </button>
+  <button class="nav-btn" data-page="map"
+          onclick="App.switchPage('map',this)" aria-label="地图">
+    <span class="icon">🗺️</span>
+    <span>地图</span>
     <span class="dot"></span>
   </button>
   <button class="nav-btn" data-page="settings"
@@ -225,6 +237,22 @@
       </div>
     </div>
 
+    <!-- 地点 -->
+    <div class="form-group">
+      <label class="form-label">地点（可选）</label>
+      <div class="location-row">
+        <input class="form-input" type="text" id="addLocation"
+               placeholder="如：麦当劳·朝阳区" style="flex:1">
+        <button class="btn btn-outline loc-gps-btn" id="gpsBtn"
+                onclick="App.locateGPS()" title="获取当前位置" type="button">
+          📍
+        </button>
+      </div>
+      <input type="hidden" id="addLat">
+      <input type="hidden" id="addLng">
+      <div class="loc-hint" id="locHint"></div>
+    </div>
+
     <!-- 备注 -->
     <div class="form-group">
       <label class="form-label" for="addNote">备注（可选）</label>
@@ -281,6 +309,39 @@
   </div>
 
 </main><!-- /#page-yearly -->
+
+<!-- ===== 地图页 ===== -->
+<main class="page" id="page-map" role="main" aria-label="消费地图">
+
+  <div class="card" style="margin-top:12px">
+    <div class="card-header">
+      <span class="card-title">🗺️ 消费热力图</span>
+      <div style="display:flex;gap:6px;align-items:center">
+        <select class="form-select" id="mapTypeFilter"
+                style="width:auto;padding:5px 10px;font-size:12px"
+                onchange="App.renderMap()">
+          <option value="">全部</option>
+          <option value="expense">支出</option>
+          <option value="income">收入</option>
+        </select>
+      </div>
+    </div>
+    <div id="mapStats" style="font-size:12px;color:var(--text3);margin-bottom:8px;padding:0 4px">
+      加载中…
+    </div>
+    <div id="mapContainer"></div>
+  </div>
+
+  <!-- 带坐标的消费列表 -->
+  <div class="card" id="mapTxnCard" style="display:none">
+    <div class="card-header">
+      <span class="card-title">📍 带位置的记录</span>
+      <span class="card-sub" id="mapTxnCount">0条</span>
+    </div>
+    <ul class="txn-list" id="mapTxnList"></ul>
+  </div>
+
+</main><!-- /#page-map -->
 
 <!-- ===== 设置页 ===== -->
 <main class="page" id="page-settings" role="main" aria-label="设置">
@@ -351,11 +412,20 @@
       <span class="s-arrow">›</span>
     </div>
 
+    <!-- 导出 Excel -->
+    <div class="setting-item" onclick="App.exportExcel()">
+      <div class="left">
+        <span class="s-icon">📊</span>
+        <span class="s-label">导出 Excel（.xlsx）</span>
+      </div>
+      <span class="s-arrow">›</span>
+    </div>
+
     <!-- 导出 JSON -->
     <div class="setting-item" onclick="App.exportData()">
       <div class="left">
         <span class="s-icon">⬆️</span>
-        <span class="s-label">导出数据（JSON）</span>
+        <span class="s-label">导出数据（JSON 备份）</span>
       </div>
       <span class="s-arrow">›</span>
     </div>

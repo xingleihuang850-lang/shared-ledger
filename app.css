@@ -772,3 +772,47 @@ body {
 }
 .toggle-wrap input:checked + .toggle-slider { background: var(--primary); }
 .toggle-wrap input:checked + .toggle-slider::before { transform: translateX(18px); }
+
+/* ===== 地点输入行 ===== */
+.location-row {
+  display: flex; gap: 8px; align-items: center;
+}
+.loc-gps-btn {
+  flex-shrink: 0;
+  width: 40px; height: 40px;
+  padding: 0;
+  font-size: 18px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 12px;
+  border: 1.5px solid var(--border);
+  background: var(--card);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+.loc-gps-btn:active { background: var(--card-hover); transform: scale(0.92); }
+.loc-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text3);
+  min-height: 16px;
+}
+
+/* ===== 地图页 ===== */
+#mapContainer {
+  height: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg);
+  transition: height 0.3s;
+}
+.leaflet-container {
+  background: var(--bg) !important;
+  font-family: inherit;
+}
+/* Leaflet popup 暗色适配 */
+.dark .leaflet-popup-content-wrapper,
+.dark .leaflet-popup-tip {
+  background: var(--card);
+  color: var(--text);
+}
+.dark .leaflet-tile { filter: brightness(0.7) saturate(0.8); }
