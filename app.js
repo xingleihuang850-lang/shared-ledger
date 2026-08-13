@@ -1270,14 +1270,13 @@ const App = {
     );
 
     // 头部
-    document.getElementById('pageTitle').innerHTML =
-      `<span id="titleText">${this.currentUser.name} 的账本</span>`;
+    document.getElementById('titleText').textContent = this.currentUser.name + ' 的账本';
     document.getElementById('currentUserName').textContent = this.currentUser.name;
     document.getElementById('homeMonth').textContent =
       `${this.currentMonth.year}年${this.currentMonth.month}月`;
 
     // 搜索模式下月份导航隐藏
-    const monthNav = document.getElementById('monthNav');
+    const monthNav = document.getElementById('monthSelector');
     if (monthNav) monthNav.style.display = ss.active ? 'none' : '';
 
     // 概览数字
@@ -1539,8 +1538,7 @@ const App = {
 
     if (diff <= 0) {
       const pct = prevExp > 0 ? Math.abs(diff) / prevExp * 100 : 0;
-      card.querySelector('.compare-card').className = 'compare-card good';
-      content.innerHTML = `
+      content.innerHTML = `<div class="compare-card good">
         <span class="cmp-emoji">${pct > 15 ? '🏆' : pct > 5 ? '🎉' : '👍'}</span>
         <div class="cmp-main">
           <div>比上个月少花了 <b>¥${Math.abs(diff).toFixed(0)}</b>
@@ -1550,7 +1548,7 @@ const App = {
             ${prevYear}年${prevMonth}月支出 ¥${prevExp.toFixed(0)}
             → ${this.currentMonth.year}年${this.currentMonth.month}月支出 ¥${thisExp.toFixed(0)}
           </div>
-        </div>`;
+        </div></div>`;
     } else {
       const breakdown     = this.getCategoryBreakdown(thisMonth, 'expense');
       const prevBreakdown = this.getCategoryBreakdown(prevMonthTxns, 'expense');
@@ -1564,13 +1562,12 @@ const App = {
       const top3 = increases.slice(0, 3)
         .map(item => `${catIconHtml({ icon: item.icon, iconImg: item.iconImg }, '16px')}${item.name} +¥${item.diff.toFixed(0)}`)
         .join('，');
-      card.querySelector('.compare-card').className = 'compare-card bad';
-      content.innerHTML = `
+      content.innerHTML = `<div class="compare-card bad">
         <span class="cmp-emoji">😅</span>
         <div class="cmp-main">
           <div>比上个月多花了 <b>¥${diff.toFixed(0)}</b></div>
           <div class="cmp-detail">主要多花在：${top3 || '各项均有小幅增长'}</div>
-        </div>`;
+        </div></div>`;
     }
   },
 
@@ -1817,6 +1814,11 @@ const App = {
 
   // ======================== 消费地图 ========================
   async renderMap() {
+    // 等待 Leaflet 库加载完成
+    if (typeof L === 'undefined') {
+      setTimeout(() => this.renderMap(), 150);
+      return;
+    }
     const filter = document.getElementById('mapTypeFilter')?.value || '';
     let txns = await this.getTransactions(true);
     if (filter) txns = txns.filter(t => t.type === filter);
