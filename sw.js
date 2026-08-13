@@ -1,5 +1,12 @@
-const CACHE = 'ledger-v2';
-const ASSETS = ['./manifest.json'];
+const CACHE = 'ledger-v4';
+// 预缓存核心静态资源，确保离线可用
+const ASSETS = [
+  './',
+  './index.html',
+  './app.css',
+  './app.js',
+  './manifest.json',
+];
 
 self.addEventListener('install', e => {
   self.skipWaiting();
