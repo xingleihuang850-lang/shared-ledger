@@ -21,10 +21,10 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
   <!-- SheetJS：Excel 导出 -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-  <!-- Leaflet：消费地图 -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js" defer></script>
+  <!-- Leaflet：消费地图（统一走 jsdelivr，与 SW 离线缓存分支一致）-->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/leaflet.heat@0.2.0/dist/leaflet-heat.js" defer></script>
 </head>
 <body>
 
@@ -722,6 +722,55 @@
     <button class="btn btn-primary" onclick="App.addWish()">添加</button>
     <button class="btn btn-outline" style="margin-top:8px"
             onclick="App.closeModal('wishModal')">取消</button>
+  </div>
+</div>
+
+<!-- 交易编辑弹窗 -->
+<div class="modal-overlay" id="editTxnModal"
+     role="dialog" aria-modal="true" aria-label="编辑记录">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">✏️ 编辑记录</div>
+
+    <div class="form-group">
+      <label class="form-label">类型</label>
+      <div class="type-toggle">
+        <button class="type-btn expense" id="editBtnExpense"
+                onclick="App.editSetType('expense',this)">💸 支出</button>
+        <button class="type-btn income" id="editBtnIncome"
+                onclick="App.editSetType('income',this)">💰 收入</button>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="editAmount">金额（元）</label>
+      <input class="form-input amount-input" type="number" id="editAmount"
+             inputmode="decimal" placeholder="0.00" min="0.01" step="0.01">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="editDate">日期</label>
+      <input class="form-input" type="date" id="editDate">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="editCat">分类</label>
+      <select class="form-select" id="editCat"></select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="editNote">备注（可选）</label>
+      <textarea class="form-input form-textarea" id="editNote"
+                placeholder="写点什么..." rows="2"></textarea>
+    </div>
+
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary" style="flex:1" onclick="App.saveEditTxn()">保存</button>
+      <button class="btn btn-outline" style="flex:1;color:var(--danger);border-color:var(--danger)"
+              onclick="App.confirmDeleteTxn()">删除</button>
+    </div>
+    <button class="btn btn-outline" style="margin-top:8px"
+            onclick="App.closeModal('editTxnModal')">取消</button>
   </div>
 </div>
 

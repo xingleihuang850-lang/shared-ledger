@@ -5,7 +5,7 @@
 
 // ======================== 常量 ========================
 const DB_NAME = 'sharedLedger';
-const DB_VER  = 5;   // v5: 新增 recurring store
+const DB_VER  = 6;   // v6: settings store 改用 keyPath:'key'（修复 keyPath 不匹配导致写入失败的 bug）
 
 const DEFAULT_EXPENSE_CATS = [
   { id: 'e1',  name: '餐饮', icon: '🍜', type: 'expense' },
@@ -39,7 +39,17 @@ function openDB() {
     const req = indexedDB.open(DB_NAME, DB_VER);
     req.onupgradeneeded = (e) => {
       const idb = e.target.result;
-      ['transactions', 'categories', 'users', 'settings', 'badges', 'wishes', 'recurring']
+      // settings 记录结构是 { key, value }，主键应为 'key'；历史版本误用 'id'，
+      // 导致 put({key,value}) 因缺少 id 字段抛 DataError，写入静默失败。
+      // 旧库中 settings 因该 bug 恒为空，可安全删除重建。
+      if (idb.objectStoreNames.contains('settings')) {
+        const old = e.target.transaction.objectStore('settings');
+        if (old.keyPath !== 'key') idb.deleteObjectStore('settings');
+      }
+      if (!idb.objectStoreNames.contains('settings')) {
+        idb.createObjectStore('settings', { keyPath: 'key' });
+      }
+      ['transactions', 'categories', 'users', 'badges', 'wishes', 'recurring']
         .forEach(storeName => {
           if (!idb.objectStoreNames.contains(storeName)) {
             idb.createObjectStore(storeName, { keyPath: 'id' });
@@ -263,6 +273,15 @@ function escapeHtml(value) {
 }
 
 /**
+ * 生成可安全嵌入「HTML 属性内的内联 JS 字符串」的值。
+ * 先 JSON.stringify 得到合法 JS 字符串字面量，再 HTML 转义。
+ * 用于 onclick="App.foo(${jsId(id)})" 这类场景，防导入 JSON 中的恶意 id 注入。
+ */
+function jsId(value) {
+  return escapeHtml(JSON.stringify(value == null ? '' : String(value)));
+}
+
+/**
  * 将 Date 对象格式化为本地日期 YYYY-MM-DD。
  * 不能用 toISOString().slice(0,10)，因为 toISOString 返回 UTC 时间，
  * 在东八区凌晨会导致日期偏移一天（甚至定期任务死循环）。
@@ -277,6 +296,19 @@ function formatLocalDate(d) {
 /** 返回今天的本地日期字符串 YYYY-MM-DD */
 function todayStr() {
   return formatLocalDate(new Date());
+}
+
+/** 按类型求和（income/expense） */
+function sumByType(txns, type) {
+  return txns.reduce((s, t) => (t.type === type ? s + (t.amount || 0) : s), 0);
+}
+
+/** 月份平移 delta 个月（跨年自动处理），返回新对象，不修改入参 */
+function shiftMonth(m, delta) {
+  let y = m.year, mo = m.month + delta;
+  if (mo < 1) { mo = 12; y--; }
+  else if (mo > 12) { mo = 1; y++; }
+  return { year: y, month: mo };
 }
 
 // ======================== 主应用 ========================
@@ -454,7 +486,7 @@ const App = {
 
   async switchUser(userId) {
     const users = await this.getUsers();
-    this.currentUser = users.find(u => u.id === userId);
+    this.currentUser = users.find(u => u.id === userId) || users[0] || this.currentUser;
     await dbPut('settings', { key: 'currentUser', value: userId });
     this.closeModal('userModal');
     this.render();
@@ -478,9 +510,9 @@ const App = {
     const list  = document.getElementById('userList');
     list.innerHTML = users.map(u => `
       <div class="user-item ${u.id === this.currentUser.id ? 'active' : ''}"
-           onclick="App.switchUser('${u.id}')">
-        <div class="user-avatar" style="background:${escapeHtml(u.color)}">${escapeHtml(u.name[0] || '?')}</div>
-        <span class="user-name">${escapeHtml(u.name)}</span>
+           onclick="App.switchUser(${jsId(u.id)})">
+        <div class="user-avatar" style="background:${escapeHtml(u.color || '#0984E3')}">${escapeHtml((u.name || '?').charAt(0) || '?')}</div>
+        <span class="user-name">${escapeHtml(u.name || '')}</span>
       </div>`
     ).join('');
     this.openModal('userModal');
@@ -504,7 +536,7 @@ const App = {
       const filtered = cats.filter(c => c.type === this.currentType);
       grid.innerHTML = filtered.map(c => `
         <div class="cat-chip ${this.currentCat === c.id ? 'selected' : ''}"
-             onclick="App.selectCat('${c.id}')">
+             onclick="App.selectCat(${jsId(c.id)})">
           <span class="cat-chip-icon">${catIconHtml(c, '20px')}</span><span class="cat-label">${escapeHtml(c.name)}</span>
         </div>`
       ).join('');
@@ -535,9 +567,9 @@ const App = {
         </span>
         <div style="display:flex;gap:6px">
           <button class="btn btn-outline" style="width:auto;padding:5px 10px;font-size:12px"
-                  onclick="App.editCatIcon('${c.id}')">图标</button>
+                  onclick="App.editCatIcon(${jsId(c.id)})">图标</button>
           <button class="btn btn-outline" style="width:auto;padding:5px 10px;font-size:12px;color:var(--danger);border-color:var(--danger)"
-                  onclick="App.delCategory('${c.id}')">删除</button>
+                  onclick="App.delCategory(${jsId(c.id)})">删除</button>
         </div>
       </div>`
     ).join('');
@@ -738,18 +770,20 @@ const App = {
    * @returns {Promise<Array>}   - 新解锁的徽章列表
    */
   async checkBadges(allTxns, monthTxns) {
-    const unlockedBadges = await dbGetAll('badges');
-    const unlockedIds    = new Set(unlockedBadges.map(b => b.id));
+    const allBadges      = await dbGetAll('badges');
+    const myBadges       = allBadges.filter(b => (b.userId || 'u1') === this.currentUser.id);
+    const unlockedIds    = new Set(myBadges.map(b => b.badgeId || b.id));
     const monthStats     = this.getMonthlyStats(monthTxns);
-    const totalIncome    = allTxns.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+    const totalIncome    = sumByType(allTxns, 'income');
     const newBadges      = [];
 
     const checks = {
       first_txn: () => allTxns.length >= 1,
 
       streak_7: () => {
+        // 统计所有交易（含纯收入）的日期，与文案「连续7天记账」一致
         const dates = new Set(
-          allTxns.filter(t => t.type === 'expense').map(t => t.date).slice(0, 30)
+          allTxns.map(t => (t.date || '')).filter(Boolean)
         );
         let maxStreak = 0, cur = 0;
         const day = new Date();
@@ -779,7 +813,7 @@ const App = {
           if (!entry) break;
           const prefix  = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
           const expense = allTxns
-            .filter(t => t.date.startsWith(prefix) && t.type === 'expense')
+            .filter(t => (t.date || '').startsWith(prefix) && t.type === 'expense')
             .reduce((s, t) => s + t.amount, 0);
           if (expense <= entry.value) consecutive++;
           else break;
@@ -790,10 +824,12 @@ const App = {
       ten_k: () => totalIncome >= 10000,
 
       no_dining: () => {
-        const diningTotal = monthTxns
-          .filter(t => t.categoryName === '餐饮' && t.type === 'expense')
-          .reduce((s, t) => s + t.amount, 0);
-        return allTxns.length > 0 && diningTotal === 0;
+        // 只对已结束的月份（上月）判定，避免月初第一天就误发「整月零餐饮」
+        const { year: py, month: pm } = shiftMonth(this.currentMonth, -1);
+        const prevTxns    = this.getTransactionsByMonth(allTxns, py, pm);
+        const diningTotal = sumByType(prevTxns.filter(t => t.categoryName === '餐饮'), 'expense');
+        const prevExpense = sumByType(prevTxns, 'expense');
+        return prevExpense > 0 && diningTotal === 0;
       },
 
       diverse: () => new Set(allTxns.map(t => t.categoryName)).size >= 10,
@@ -806,7 +842,9 @@ const App = {
         : checks[def.id]();
       if (passed) {
         const badge = {
-          id:         def.id,
+          id:         this.currentUser.id + '_' + def.id,
+          badgeId:    def.id,
+          userId:     this.currentUser.id,
           name:       def.name,
           icon:       def.icon,
           desc:       def.desc,
@@ -830,7 +868,7 @@ const App = {
   renderBadges(unlockedBadges) {
     const card     = document.getElementById('badgeCard');
     const row      = document.getElementById('badgeRow');
-    const unlockMap = new Map(unlockedBadges.map(b => [b.id, b]));
+    const unlockMap = new Map(unlockedBadges.map(b => [b.badgeId || b.id, b]));
 
     card.style.display = 'block';
     document.getElementById('badgeCount').textContent =
@@ -854,7 +892,8 @@ const App = {
 
   // ======================== 愿望清单 ========================
   async getWishes() {
-    return await dbGetAll('wishes');
+    const all = await dbGetAll('wishes');
+    return all.filter(w => (w.userId || 'u1') === this.currentUser.id);
   },
 
   showWishModal() {
@@ -869,7 +908,7 @@ const App = {
     const target = parseFloat(document.getElementById('wishTarget').value);
     const icon   = document.getElementById('wishIcon').value.trim() || '🎯';
     if (!name || !target || target <= 0) return this.toast('请填写完整信息');
-    const wish = { id: 'w' + Date.now(), name, target, icon, createdAt: new Date().toISOString() };
+    const wish = { id: 'w' + Date.now(), name, target, icon, createdAt: new Date().toISOString(), userId: this.currentUser.id };
     await dbPut('wishes', wish);
     this.toast('✨ 愿望已添加，加油！');
     this.closeModal('wishModal');
@@ -884,11 +923,12 @@ const App = {
     card.style.display = 'block';
 
     const totalSavings = txns
-      ? txns.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
-        - txns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
+      ? sumByType(txns, 'income') - sumByType(txns, 'expense')
       : 0;
 
-    list.innerHTML = wishes.map(w => {
+    list.innerHTML =
+      '<div style="font-size:12px;color:var(--text3);padding:2px 0 8px">进度按「当前用户总存款（收入−支出）」独立计算，多个愿望会同时计入</div>' +
+      wishes.map(w => {
       const pct       = Math.min(totalSavings / w.target * 100, 100);
       const savedAmt  = Math.min(totalSavings, w.target).toFixed(0);
       const emoji     = pct >= 100 ? '🎉' : pct >= 50 ? '💪' : pct >= 25 ? '🔥' : '💤';
@@ -1004,6 +1044,95 @@ const App = {
     this.toast('已删除');
   },
 
+  // ======================== 交易编辑 ========================
+  /** 点击交易条目：打开编辑弹窗（支持编辑 + 删除） */
+  async openEditTxn(id) {
+    const txns = await this.getTransactions(true);
+    const txn = txns.find(t => t.id === id);
+    if (!txn) return;
+    this._editingTxnId = id;
+    this._editType     = txn.type || 'expense';
+    document.getElementById('editAmount').value = txn.amount;
+    document.getElementById('editDate').value   = txn.date || todayStr();
+    document.getElementById('editNote').value   = txn.note || '';
+    this._renderEditTypeButtons();
+    await this._renderEditCats(txn.categoryId);
+    this.openModal('editTxnModal');
+  },
+
+  /** 切换编辑弹窗的收支类型 */
+  editSetType(type) {
+    this._editType = type;
+    this._renderEditTypeButtons();
+    this._renderEditCats(null);
+  },
+
+  _renderEditTypeButtons() {
+    const expBtn = document.getElementById('editBtnExpense');
+    const incBtn = document.getElementById('editBtnIncome');
+    if (expBtn) expBtn.classList.toggle('active', this._editType === 'expense');
+    if (incBtn) incBtn.classList.toggle('active', this._editType === 'income');
+  },
+
+  /** 按类型填充分类下拉 */
+  async _renderEditCats(selectedId) {
+    const cats = await this.getCategories();
+    const list = cats.filter(c => c.type === this._editType);
+    const sel  = document.getElementById('editCat');
+    sel.innerHTML = list.map(c =>
+      `<option value="${escapeHtml(c.id)}">${escapeHtml(c.icon || '')} ${escapeHtml(c.name)}</option>`
+    ).join('');
+    if (selectedId && list.some(c => c.id === selectedId)) sel.value = selectedId;
+  },
+
+  /** 保存编辑 */
+  async saveEditTxn() {
+    const id = this._editingTxnId;
+    if (!id) return;
+    const amount = parseFloat(document.getElementById('editAmount').value);
+    const date   = document.getElementById('editDate').value;
+    const note   = document.getElementById('editNote').value.trim();
+    const catId  = document.getElementById('editCat').value;
+    if (!amount || amount <= 0) return this.toast('请输入金额');
+    if (!date)                  return this.toast('请选择日期');
+    if (!catId)                 return this.toast('请选择分类');
+
+    const txns = await this.getTransactions(true);
+    const txn = txns.find(t => t.id === id);
+    if (!txn) return;
+    const cats = await this.getCategories();
+    const cat  = cats.find(c => c.id === catId);
+
+    txn.amount         = amount;
+    txn.date           = date;
+    txn.note           = note;
+    txn.type           = this._editType;
+    txn.categoryId     = catId;
+    txn.categoryName   = cat ? cat.name : '未知';
+    txn.categoryIcon   = cat ? cat.icon : '❓';
+    txn.categoryIconImg = cat && cat.iconImg ? cat.iconImg : undefined;
+
+    await dbPut('transactions', txn);
+    this.closeModal('editTxnModal');
+    this._editingTxnId = null;
+
+    const allTxns   = await this.getTransactions(true);
+    const monthTxns = this.getTransactionsByMonth(allTxns, this.currentMonth.year, this.currentMonth.month);
+    await this.checkBadges(allTxns, monthTxns);
+    this.render();
+    this.toast('已保存');
+  },
+
+  /** 编辑弹窗里的删除按钮 */
+  async confirmDeleteTxn() {
+    const id = this._editingTxnId;
+    if (!id) return;
+    if (!confirm('确定删除这条记录？')) return;
+    this.closeModal('editTxnModal');
+    this._editingTxnId = null;
+    await this.deleteTxn(id);
+  },
+
   // ======================== 预算 ========================
   async getBudget() {
     const key = `budget_${this.currentUser.id}_${this.currentMonth.year}_${this.currentMonth.month}`;
@@ -1041,7 +1170,9 @@ const App = {
    */
 
   async getRecurring() {
-    return await dbGetAll('recurring');
+    const all = await dbGetAll('recurring');
+    // 定期项按用户隔离：无 userId 的旧数据视为当前用户所有，有 userId 的只返回当前用户的
+    return all.filter(r => !r.userId || r.userId === this.currentUser.id);
   },
 
   /** 在 init 时调用：自动补生成所有逾期定期记录 */
@@ -1114,13 +1245,29 @@ const App = {
     } else if (item.freq === 'weekly') {
       d.setDate(d.getDate() + 7);
     } else if (item.freq === 'monthly') {
+      // 先回到本月 1 号再 +1 月，避免 1/31 溢出到 3/3 导致整月跳过 2 月
+      d.setDate(1);
       d.setMonth(d.getMonth() + 1);
       const dom = item.dayOfMonth || 1;
-      d.setDate(Math.min(dom, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()));
+      const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+      d.setDate(Math.min(dom, lastDay));
     } else {
       return null;
     }
     return formatLocalDate(d);
+  },
+
+  /** 计算月度定期项首次触发日：本月 dayOfMonth 已过则顺延到下月 */
+  _firstMonthlyDate(dayOfMonth) {
+    const today = new Date();
+    const y = today.getFullYear(), m = today.getMonth();
+    const dom = dayOfMonth || 1;
+    const clamp = (yy, mm) => Math.min(dom, new Date(yy, mm + 1, 0).getDate());
+    let first = new Date(y, m, clamp(y, m));
+    if (first < new Date(y, m, today.getDate())) {
+      first = new Date(y, m + 1, clamp(y, m + 1));
+    }
+    return formatLocalDate(first);
   },
 
   /** 打开定期收支管理弹窗 */
@@ -1143,11 +1290,11 @@ const App = {
             <div style="display:flex;gap:6px;align-items:center">
               <label class="toggle-wrap">
                 <input type="checkbox" ${item.enabled ? 'checked' : ''}
-                       onchange="App.toggleRecurring('${item.id}', this.checked)">
+                       onchange="App.toggleRecurring(${jsId(item.id)}, this.checked)">
                 <span class="toggle-slider"></span>
               </label>
               <button class="btn btn-outline" style="width:auto;padding:5px 10px;font-size:12px;color:var(--danger);border-color:var(--danger)"
-                      onclick="App.deleteRecurring('${item.id}')">删除</button>
+                      onclick="App.deleteRecurring(${jsId(item.id)})">删除</button>
             </div>
           </div>`;
       }).join('');
@@ -1182,9 +1329,10 @@ const App = {
       categoryId:   catId,
       categoryName: selOpt ? selOpt.dataset.name : '',
       categoryIcon: selOpt ? selOpt.dataset.icon : '📅',
-      startDate:    todayStr(),
+      startDate:    freq === 'monthly' ? this._firstMonthlyDate(dom) : todayStr(),
       lastGenDate:  '',
       enabled:      true,
+      userId:       this.currentUser.id,
     };
     await dbPut('recurring', item);
     document.getElementById('newRecurName').value = '';
@@ -1224,27 +1372,28 @@ const App = {
 
   getTransactionsByMonth(txns, year, month) {
     const prefix = `${year}-${String(month).padStart(2, '0')}`;
-    return txns.filter(t => t.date.startsWith(prefix));
+    return txns.filter(t => (t.date || '').startsWith(prefix));
   },
 
   getMonthlyStats(txns) {
-    const income  = txns.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-    const expense = txns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    const income  = sumByType(txns, 'income');
+    const expense = sumByType(txns, 'expense');
     return { income, expense, balance: income - expense };
   },
 
   getCategoryBreakdown(txns, type) {
     const map = {};
     txns.filter(t => t.type === type).forEach(t => {
-      if (!map[t.categoryName]) {
-        map[t.categoryName] = {
-          name: t.categoryName, icon: t.categoryIcon,
+      const catName = t.categoryName || '未分类';
+      if (!map[catName]) {
+        map[catName] = {
+          name: catName, icon: t.categoryIcon,
           iconImg: t.categoryIconImg || '', amount: 0,
         };
       }
       // 若有更新的 iconImg 则更新（最新记录优先）
-      if (t.categoryIconImg) map[t.categoryName].iconImg = t.categoryIconImg;
-      map[t.categoryName].amount += t.amount;
+      if (t.categoryIconImg) map[catName].iconImg = t.categoryIconImg;
+      map[catName].amount += t.amount;
     });
     return Object.values(map).sort((a, b) => b.amount - a.amount);
   },
@@ -1253,11 +1402,11 @@ const App = {
     const months = [];
     for (let m = 1; m <= 12; m++) {
       const prefix = `${year}-${String(m).padStart(2, '0')}`;
-      const mt     = txns.filter(t => t.date.startsWith(prefix));
+      const mt     = txns.filter(t => (t.date || '').startsWith(prefix));
       months.push({
         month:   m,
-        income:  mt.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0),
-        expense: mt.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0),
+        income:  sumByType(mt, 'income'),
+        expense: sumByType(mt, 'expense'),
       });
     }
     return months;
@@ -1265,23 +1414,19 @@ const App = {
 
   // ======================== 月份导航 ========================
   prevMonth() {
-    if (this.currentMonth.month === 1) { this.currentMonth.year--; this.currentMonth.month = 12; }
-    else this.currentMonth.month--;
+    Object.assign(this.currentMonth, shiftMonth(this.currentMonth, -1));
     this.render();
   },
   nextMonth() {
-    if (this.currentMonth.month === 12) { this.currentMonth.year++; this.currentMonth.month = 1; }
-    else this.currentMonth.month++;
+    Object.assign(this.currentMonth, shiftMonth(this.currentMonth, 1));
     this.render();
   },
   statsPrevMonth() {
-    if (this.statsMonth.month === 1) { this.statsMonth.year--; this.statsMonth.month = 12; }
-    else this.statsMonth.month--;
+    Object.assign(this.statsMonth, shiftMonth(this.statsMonth, -1));
     this.renderStats();
   },
   statsNextMonth() {
-    if (this.statsMonth.month === 12) { this.statsMonth.year++; this.statsMonth.month = 1; }
-    else this.statsMonth.month++;
+    Object.assign(this.statsMonth, shiftMonth(this.statsMonth, 1));
     this.renderStats();
   },
 
@@ -1341,16 +1486,23 @@ const App = {
         `¥${stats.expense.toFixed(0)} / ¥${budget}`;
       const remaining = budget - stats.expense;
       const tip       = document.getElementById('budgetTip');
-      const daysLeft  = Math.max(
-        1,
-        new Date(this.currentMonth.year, this.currentMonth.month, 0).getDate() - new Date().getDate()
-      );
       if (remaining < 0)
         tip.textContent = `⚠️ 已超支 ¥${Math.abs(remaining).toFixed(0)}`;
       else if (pct > 90)
         tip.textContent = `⚡ 即将超支，剩余 ¥${remaining.toFixed(0)}`;
-      else
-        tip.textContent = `剩余 ¥${remaining.toFixed(0)}，日均可用 ¥${(remaining / daysLeft).toFixed(0)}`;
+      else {
+        const now = new Date();
+        const isCurrentMonth =
+          this.currentMonth.year === now.getFullYear() &&
+          this.currentMonth.month === now.getMonth() + 1;
+        if (isCurrentMonth) {
+          const daysInMonth = new Date(this.currentMonth.year, this.currentMonth.month, 0).getDate();
+          const daysLeft = Math.max(1, daysInMonth - now.getDate() + 1);
+          tip.textContent = `剩余 ¥${remaining.toFixed(0)}，日均可用 ¥${(remaining / daysLeft).toFixed(0)}`;
+        } else {
+          tip.textContent = `剩余 ¥${remaining.toFixed(0)}`;
+        }
+      }
     } else {
       budgetCard.style.display = 'none';
     }
@@ -1371,7 +1523,7 @@ const App = {
       empty.style.display = 'none';
       list.innerHTML = displayTxns.map((t, i) => `
         <li class="txn-item" style="animation-delay:${i * 0.05}s"
-            data-txn-id="${t.id}"
+            data-txn-id="${escapeHtml(t.id)}"
             onclick="App._onTxnClick(this)">
           <div class="txn-left">
             <div class="txn-icon" style="background:${t.type === 'income' ? '#FEE' : '#E8F8F5'}">
@@ -1380,7 +1532,7 @@ const App = {
             <div class="txn-info">
               <div class="txn-cat">${escapeHtml(t.categoryName)} ${escapeHtml(t.mood || '')}${ss.active ? `<span class="txn-date-tag">${escapeHtml(t.date)}</span>` : ''}</div>
               <div class="txn-meta">
-                ${escapeHtml(t.date.slice(5))} · ${escapeHtml(t.userName)}${t.note ? ' · ' + escapeHtml(t.note) : ''}
+                ${escapeHtml((t.date || '').slice(5))} · ${escapeHtml(t.userName || '')}${t.note ? ' · ' + escapeHtml(t.note) : ''}
               </div>
             </div>
           </div>
@@ -1398,7 +1550,7 @@ const App = {
 
     // 徽章（只展示，不在这里触发检查）
     const allBadges = await dbGetAll('badges');
-    this.renderBadges(allBadges);
+    this.renderBadges(allBadges.filter(b => (b.userId || 'u1') === this.currentUser.id));
 
     // 愿望清单
     await this.renderWishes(allTxns);
@@ -1421,7 +1573,7 @@ const App = {
       if (ss.dateTo    && t.date > ss.dateTo)            return false;
       if (ss.keyword) {
         const kw = ss.keyword.toLowerCase();
-        const hit = t.categoryName.toLowerCase().includes(kw)
+        const hit = (t.categoryName || '').toLowerCase().includes(kw)
           || (t.note || '').toLowerCase().includes(kw)
           || String(t.amount).includes(kw);
         if (!hit) return false;
@@ -1477,8 +1629,7 @@ const App = {
   },
 
   _onTxnClick(el) {
-    const id = el.dataset.txnId;
-    if (confirm('删除这条记录？')) this.deleteTxn(id);
+    this.openEditTxn(el.dataset.txnId);
   },
 
   // ======================== 统计页 ========================
@@ -1565,14 +1716,13 @@ const App = {
     const thisMonth = this.getTransactionsByMonth(
       allTxns, this.currentMonth.year, this.currentMonth.month
     );
-    const prevYear  = this.currentMonth.month === 1 ? this.currentMonth.year - 1 : this.currentMonth.year;
-    const prevMonth = this.currentMonth.month === 1 ? 12 : this.currentMonth.month - 1;
+    const { year: prevYear, month: prevMonth } = shiftMonth(this.currentMonth, -1);
     const prevMonthTxns = this.getTransactionsByMonth(allTxns, prevYear, prevMonth);
 
     if (prevMonthTxns.length === 0) { card.style.display = 'none'; return; }
 
-    const thisExp = thisMonth.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-    const prevExp = prevMonthTxns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    const thisExp = sumByType(thisMonth, 'expense');
+    const prevExp = sumByType(prevMonthTxns, 'expense');
     const diff    = thisExp - prevExp;
 
     card.style.display = 'block';
@@ -1621,9 +1771,9 @@ const App = {
     const year      = this.yearSummary.year;
     document.getElementById('yearLabel').textContent = year + '年';
 
-    const yearTxns  = allTxns.filter(t => t.date.startsWith(year + '-'));
-    const totalIn   = yearTxns.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-    const totalOut  = yearTxns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    const yearTxns  = allTxns.filter(t => (t.date || '').startsWith(year + '-'));
+    const totalIn   = sumByType(yearTxns, 'income');
+    const totalOut  = sumByType(yearTxns, 'expense');
     const savings   = totalIn - totalOut;
     const saveRate  = totalIn > 0 ? Math.round(savings / totalIn * 100) : 0;
 
@@ -1638,7 +1788,7 @@ const App = {
     for (let m = 1; m <= maxMonths; m++) {
       const prefix  = `${year}-${String(m).padStart(2, '0')}`;
       const expense = yearTxns
-        .filter(t => t.date.startsWith(prefix) && t.type === 'expense')
+        .filter(t => (t.date || '').startsWith(prefix) && t.type === 'expense')
         .reduce((s, t) => s + t.amount, 0);
       if (expense > bestMonth.amt) bestMonth  = { m, amt: expense };
       if (expense < worstMonth.amt && expense > 0) worstMonth = { m, amt: expense };
@@ -1733,13 +1883,16 @@ const App = {
 
   // ======================== 导入导出 ========================
   async exportData() {
-    const [transactions, categories, users, settings] = await Promise.all([
+    const [transactions, categories, users, settings, badges, wishes, recurring] = await Promise.all([
       dbGetAll('transactions'),
       dbGetAll('categories'),
       dbGetAll('users'),
       dbGetAll('settings'),
+      dbGetAll('badges'),
+      dbGetAll('wishes'),
+      dbGetAll('recurring'),
     ]);
-    const data = JSON.stringify({ transactions, categories, users, settings }, null, 2);
+    const data = JSON.stringify({ transactions, categories, users, settings, badges, wishes, recurring }, null, 2);
     const blob = new Blob([data], { type: 'application/json' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
@@ -1760,7 +1913,7 @@ const App = {
     if (txns.length === 0) { this.toast('暂无数据可导出'); return; }
 
     // 排序：日期降序
-    const sorted = [...txns].sort((a, b) => b.date.localeCompare(a.date));
+    const sorted = [...txns].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
     const wsData = [
       ['日期', '类型', '金额(元)', '分类', '心情', '地点', '备注', '记录人', '创建时间'],
@@ -1791,7 +1944,7 @@ const App = {
     // 月度汇总 sheet
     const monthMap = {};
     for (const t of sorted) {
-      const key = t.date.slice(0, 7);
+      const key = (t.date || '').slice(0, 7);
       if (!monthMap[key]) monthMap[key] = { income: 0, expense: 0 };
       if (t.type === 'income') monthMap[key].income += t.amount;
       else monthMap[key].expense += t.amount;
@@ -1945,7 +2098,7 @@ const App = {
     cardEl.style.display = '';
     countEl.textContent  = `${located.length}条`;
     listEl.innerHTML     = [...located]
-      .sort((a, b) => b.date.localeCompare(a.date))
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
       .map(t => `
         <li class="txn-item">
           <div class="txn-left">
@@ -1977,6 +2130,9 @@ const App = {
           d.categories   ? dbPutBatch('categories',   d.categories)   : Promise.resolve(),
           d.users        ? dbPutBatch('users',         d.users)        : Promise.resolve(),
           d.settings     ? dbPutBatch('settings',      d.settings)     : Promise.resolve(),
+          d.badges       ? dbPutBatch('badges',        d.badges)       : Promise.resolve(),
+          d.wishes       ? dbPutBatch('wishes',        d.wishes)       : Promise.resolve(),
+          d.recurring    ? dbPutBatch('recurring',     d.recurring)    : Promise.resolve(),
         ]);
         await this.initUsers();
         this.render();
@@ -1992,10 +2148,14 @@ const App = {
   async clearAll() {
     if (!confirm('⚠️ 确定要清空所有数据吗？此操作不可恢复！')) return;
     await Promise.all([
-      dbClear('transactions'),
-      dbClear('categories'),
+      dbClear('transactions'), dbClear('categories'), dbClear('users'),
+      dbClear('settings'),     dbClear('badges'),     dbClear('wishes'), dbClear('recurring'),
     ]);
     await dbPutBatch('categories', [...DEFAULT_EXPENSE_CATS, ...DEFAULT_INCOME_CATS]);
+    // 重建默认用户，避免清空后 currentUser 悬空
+    const defaultUser = { id: 'u1', name: '我', color: USER_COLORS[0] };
+    await dbPut('users', defaultUser);
+    this.currentUser = defaultUser;
     this.render();
     this.renderCats();
     this.toast('数据已清空');
@@ -2040,7 +2200,7 @@ const App = {
     for (const txn of newTxns) {
       const typeCats = cats.filter(c => c.type === txn.type);
       let cat = typeCats.find(c => c.name === txn.categoryName);
-      if (!cat) cat = typeCats.find(c => c.id === (txn.type === 'expense' ? 'e99' : 'i5')) || typeCats[0];
+      if (!cat) cat = typeCats.find(c => c.id === (txn.type === 'expense' ? 'e10' : 'i5')) || typeCats[0];
       if (!cat) continue;
       records.push({
         id:           't' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
@@ -2103,69 +2263,23 @@ const App = {
     return 'unknown';
   },
 
-  parseAlipayCSV(rows) {
+  parsePaymentCSV(rows, cfg) {
     let headerIdx = -1;
     for (let i = 0; i < rows.length; i++) {
-      if (rows[i][0] === '交易号') { headerIdx = i; break; }
+      if (rows[i][0] === cfg.headerCell) { headerIdx = i; break; }
     }
-    if (headerIdx === -1) { this.toast('未找到支付宝账单表头'); return []; }
+    if (headerIdx === -1) { this.toast(`未找到${cfg.brand}账单表头`); return []; }
 
-    const h    = rows[headerIdx];
-    const cId  = h.indexOf('交易创建时间');
-    const cOther = h.indexOf('交易对方');
-    const cGoods = h.indexOf('商品名称');
-    const cAmt = h.indexOf('金额(元)');
-    const cDir = h.indexOf('收/支');
-    const cNote = Math.max(h.indexOf('备注'), -1);
-
-    if (cId === -1 || cAmt === -1 || cDir === -1) {
-      this.toast('支付宝账单格式不匹配'); return [];
-    }
-
-    const txns = [];
-    for (let i = headerIdx + 1; i < rows.length; i++) {
-      const r = rows[i];
-      if (r.length <= Math.max(cId, cAmt, cDir)) continue;
-      const dir = (r[cDir] || '').trim();
-      if (dir !== '支出' && dir !== '收入') continue;
-      const amt = parseFloat(r[cAmt]);
-      if (isNaN(amt) || amt <= 0) continue;
-      const dateStr = r[cId] ? r[cId].split(' ')[0] : '';
-      if (!dateStr || !dateStr.includes('-')) continue;
-
-      const other   = cOther >= 0  ? (r[cOther] || '')  : '';
-      const goods   = cGoods >= 0  ? (r[cGoods] || '')  : '';
-      const note    = cNote  >= 0  ? (r[cNote]  || '')  : '';
-      const cat     = guessCategoryFromDesc(goods + other, dir);
-      const noteStr = [other, goods, note].filter(Boolean).join(' · ').slice(0, 100);
-      txns.push({
-        type:         dir === '收入' ? 'income' : 'expense',
-        amount:       amt,
-        date:         dateStr,
-        note:         noteStr || '支付宝账单',
-        categoryName: cat,
-      });
-    }
-    return txns;
-  },
-
-  parseWechatCSV(rows) {
-    let headerIdx = -1;
-    for (let i = 0; i < rows.length; i++) {
-      if (rows[i][0] === '交易时间') { headerIdx = i; break; }
-    }
-    if (headerIdx === -1) { this.toast('未找到微信账单表头'); return []; }
-
-    const h    = rows[headerIdx];
-    const cTime  = h.indexOf('交易时间');
-    const cOther = h.indexOf('交易对方');
-    const cGoods = h.indexOf('商品');
-    const cDir   = h.indexOf('收/支');
-    const cAmt   = h.indexOf('金额(元)');
-    const cNote  = Math.max(h.indexOf('备注'), -1);
+    const h      = rows[headerIdx];
+    const cTime  = h.indexOf(cfg.timeCol);
+    const cOther = h.indexOf(cfg.otherCol);
+    const cGoods = h.indexOf(cfg.goodsCol);
+    const cAmt   = h.indexOf(cfg.amtCol);
+    const cDir   = h.indexOf(cfg.dirCol);
+    const cNote  = Math.max(h.indexOf(cfg.noteCol), -1);
 
     if (cTime === -1 || cAmt === -1 || cDir === -1) {
-      this.toast('微信账单格式不匹配'); return [];
+      this.toast(`${cfg.brand}账单格式不匹配`); return [];
     }
 
     const txns = [];
@@ -2174,7 +2288,7 @@ const App = {
       if (r.length <= Math.max(cTime, cAmt, cDir)) continue;
       const dir = (r[cDir] || '').trim();
       if (dir !== '支出' && dir !== '收入') continue;
-      const amt = parseFloat(r[cAmt].replace(/[¥￥,]/g, ''));
+      const amt = cfg.amountParse(r[cAmt]);
       if (isNaN(amt) || amt <= 0) continue;
       const dateStr = r[cTime] ? r[cTime].split(' ')[0] : '';
       if (!dateStr || !dateStr.includes('-')) continue;
@@ -2188,11 +2302,41 @@ const App = {
         type:         dir === '收入' ? 'income' : 'expense',
         amount:       amt,
         date:         dateStr,
-        note:         noteStr || '微信账单',
+        note:         noteStr || cfg.defaultNote,
         categoryName: cat,
       });
     }
     return txns;
+  },
+
+  parseAlipayCSV(rows) {
+    return this.parsePaymentCSV(rows, {
+      headerCell:  '交易号',
+      timeCol:     '交易创建时间',
+      otherCol:    '交易对方',
+      goodsCol:    '商品名称',
+      amtCol:      '金额(元)',
+      dirCol:      '收/支',
+      noteCol:     '备注',
+      defaultNote: '支付宝账单',
+      brand:       '支付宝',
+      amountParse: v => parseFloat(v),
+    });
+  },
+
+  parseWechatCSV(rows) {
+    return this.parsePaymentCSV(rows, {
+      headerCell:  '交易时间',
+      timeCol:     '交易时间',
+      otherCol:    '交易对方',
+      goodsCol:    '商品',
+      amtCol:      '金额(元)',
+      dirCol:      '收/支',
+      noteCol:     '备注',
+      defaultNote: '微信账单',
+      brand:       '微信',
+      amountParse: v => parseFloat(v.replace(/[¥￥,]/g, '')),
+    });
   },
 
   // ======================== GitHub Gist 同步 ========================
@@ -2266,15 +2410,16 @@ const App = {
   },
 
   async collectAllData() {
-    const [transactions, categories, users, settings, badges, wishes] = await Promise.all([
+    const [transactions, categories, users, settings, badges, wishes, recurring] = await Promise.all([
       dbGetAll('transactions'),
       dbGetAll('categories'),
       dbGetAll('users'),
       dbGetAll('settings'),
       dbGetAll('badges'),
       dbGetAll('wishes'),
+      dbGetAll('recurring'),
     ]);
-    return { transactions, categories, users, settings, badges, wishes, syncVersion: Date.now() };
+    return { transactions, categories, users, settings, badges, wishes, recurring, syncVersion: Date.now() };
   },
 
   async pushSync() {
@@ -2322,7 +2467,7 @@ const App = {
       // 先清空所有 store
       await Promise.all([
         dbClear('transactions'), dbClear('categories'), dbClear('users'),
-        dbClear('settings'),     dbClear('badges'),     dbClear('wishes'),
+        dbClear('settings'),     dbClear('badges'),     dbClear('wishes'), dbClear('recurring'),
       ]);
 
       // 批量写入（P2: 替代逐条串行写入）
@@ -2333,6 +2478,7 @@ const App = {
         d.settings?.length     ? dbPutBatch('settings',      d.settings)     : Promise.resolve(),
         d.badges?.length       ? dbPutBatch('badges',        d.badges)       : Promise.resolve(),
         d.wishes?.length       ? dbPutBatch('wishes',        d.wishes)       : Promise.resolve(),
+        d.recurring?.length    ? dbPutBatch('recurring',     d.recurring)    : Promise.resolve(),
       ]);
 
       const now = new Date().toLocaleString('zh-CN');
