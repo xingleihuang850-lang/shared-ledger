@@ -84,7 +84,7 @@ PWA 与 APK 使用同一在线应用和 IndexedDB 本地数据。网页功能更
 
 ## Android 自动发布
 
-推送形如 `v1.2.1` 的版本标签后，GitHub Actions 会自动：
+推送形如 `v1.2.2` 的版本标签后，GitHub Actions 会自动：
 
 1. 从仓库加密 Secrets 恢复发布签名；
 2. 使用 Gradle 构建正式签名 APK；

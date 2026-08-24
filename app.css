@@ -529,6 +529,32 @@ body {
 /* ===== 图表容器 ===== */
 .chart-wrap { position: relative; height: 220px; margin: 8px 0; }
 
+/* ===== 消费地图筛选与图例 ===== */
+.map-filters {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: end; gap: 8px; margin: 4px 0 12px;
+}
+.map-filters label { min-width: 0; }
+.map-filters label > span {
+  display: block; margin: 0 0 4px 2px;
+  color: var(--text3); font-size: 11px;
+}
+.map-filters .form-input { padding: 8px 9px; font-size: 12px; }
+.map-filter-reset { width: auto; min-height: 37px; padding: 7px 12px; }
+.map-empty {
+  padding: 48px 0; color: var(--text3);
+  font-size: 14px; text-align: center;
+}
+.map-legend {
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: 7px; margin-top: 10px; color: var(--text3); font-size: 11px;
+}
+.map-legend-gradient {
+  width: 112px; height: 10px; border-radius: 999px;
+  background: linear-gradient(90deg, #00B894 0%, #FDCB6E 40%, #E17055 72%, #D63031 100%);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
+}
+
 /* ===== 弹窗 ===== */
 .modal-overlay {
   display: none; position: fixed; inset: 0; z-index: 300;
@@ -554,6 +580,20 @@ body {
   border-radius: 2px; margin: 0 auto 16px;
 }
 .modal-title { font-size: 17px; font-weight: 700; margin-bottom: 16px; text-align: center; }
+.confirm-overlay { z-index: 320; }
+.confirm-modal { border-radius: 20px; margin: auto 16px 24px; max-width: 420px; }
+.confirm-message {
+  margin: 0 0 16px; color: var(--text2);
+  font-size: 14px; line-height: 1.6; text-align: center;
+}
+.confirm-error {
+  margin: 0 0 14px; padding: 10px 12px;
+  border-radius: 10px; background: #FFEBEE; color: var(--danger);
+  font-size: 12px; line-height: 1.5;
+}
+.confirm-actions { display: flex; gap: 8px; }
+.confirm-actions .btn { flex: 1; }
+.btn:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 
 /* ===== 用户 ===== */
 .user-list { display: flex; flex-direction: column; gap: 8px; }
@@ -655,6 +695,11 @@ body {
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ===== 响应式 ===== */
+@media (max-width: 520px) {
+  .map-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .map-filter-reset { width: 100%; }
+}
+
 @media (min-width: 768px) {
   body       { max-width: 480px; margin: 0 auto; }
   .page      { max-width: 480px; margin: 0 auto; }

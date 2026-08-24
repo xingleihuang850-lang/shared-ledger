@@ -6,7 +6,7 @@
 // ======================== 常量 ========================
 const DB_NAME = 'sharedLedger';
 const DB_VER  = 7;   // v7: 新增 snapshots store，用于恢复前自动快照
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.2.2';
 const BACKUP_FORMAT_VERSION = 2;
 const DATA_STORES = [
   'transactions', 'categories', 'users', 'settings',
@@ -411,6 +411,75 @@ function formatLocalDate(d) {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+/**
+ * 按地图筛选器过滤交易。默认只显示支出；月份与起止日期同时设置时取交集。
+ */
+function filterMapTransactions(txns, filters = {}) {
+  const type = filters.type === undefined ? 'expense' : filters.type;
+  const month = String(filters.month || '');
+  const dateFrom = String(filters.dateFrom || '');
+  const dateTo = String(filters.dateTo || '');
+  return txns.filter(t => {
+    const date = String(t.date || '');
+    if (type && t.type !== type) return false;
+    if (month && !date.startsWith(month)) return false;
+    if (dateFrom && date < dateFrom) return false;
+    if (dateTo && date > dateTo) return false;
+    return true;
+  });
+}
+
+/**
+ * 把约 11 米内（经纬度保留 4 位）的记录视为同一地点，并汇总金额。
+ */
+function aggregateMapLocations(txns) {
+  const groups = new Map();
+  for (const txn of txns) {
+    const lat = Number(txn.lat);
+    const lng = Number(txn.lng);
+    const amount = Number(txn.amount);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) ||
+        lat < -90 || lat > 90 || lng < -180 || lng > 180 ||
+        !Number.isFinite(amount) || amount <= 0) continue;
+
+    const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        key,
+        latSum: 0,
+        lngSum: 0,
+        amount: 0,
+        count: 0,
+        locationName: '',
+        latestDate: '',
+        categories: new Set(),
+      };
+      groups.set(key, group);
+    }
+    group.latSum += lat;
+    group.lngSum += lng;
+    group.amount += amount;
+    group.count += 1;
+    if (!group.locationName && txn.locationName) group.locationName = String(txn.locationName);
+    if (String(txn.date || '') > group.latestDate) group.latestDate = String(txn.date || '');
+    if (txn.categoryName) group.categories.add(String(txn.categoryName));
+  }
+
+  return [...groups.values()]
+    .map(group => ({
+      key: group.key,
+      lat: group.latSum / group.count,
+      lng: group.lngSum / group.count,
+      amount: group.amount,
+      count: group.count,
+      locationName: group.locationName,
+      latestDate: group.latestDate,
+      categories: [...group.categories],
+    }))
+    .sort((a, b) => b.amount - a.amount);
 }
 
 /** 返回今天的本地日期字符串 YYYY-MM-DD */
@@ -1219,6 +1288,8 @@ const App = {
 
   async deleteTxn(id) {
     await dbDelete('transactions', id);
+    const remaining = await dbGet('transactions', id);
+    if (remaining) throw new Error('记录仍存在于本机数据库，请稍后重试');
     // 删除后也触发徽章检查（某些徽章依赖记录数）
     const allTxns   = await this.getTransactions(true);
     const monthTxns = this.getTransactionsByMonth(
@@ -1312,10 +1383,16 @@ const App = {
   async confirmDeleteTxn() {
     const id = this._editingTxnId;
     if (!id) return;
-    if (!confirm('确定删除这条记录？')) return;
-    this.closeModal('editTxnModal');
-    this._editingTxnId = null;
-    await this.deleteTxn(id);
+    this.showConfirm({
+      title: '删除记录',
+      message: '删除后无法撤销，确定删除当前记录吗？',
+      confirmText: '确认删除',
+      action: async () => {
+        await this.deleteTxn(id);
+        this._editingTxnId = null;
+        this.closeModal('editTxnModal');
+      },
+    });
   },
 
   // ======================== 预算 ========================
@@ -2201,27 +2278,49 @@ const App = {
       setTimeout(() => this.renderMap(), 150);
       return;
     }
-    const filter = document.getElementById('mapTypeFilter')?.value || '';
-    let txns = await this.getTransactions(true);
-    if (filter) txns = txns.filter(t => t.type === filter);
-
-    // 有坐标的记录
-    const located = txns.filter(t => t.lat != null && t.lng != null);
+    const filter = document.getElementById('mapTypeFilter')?.value ?? 'expense';
+    const month = document.getElementById('mapMonthFilter')?.value || '';
+    const dateFrom = document.getElementById('mapDateFrom')?.value || '';
+    const dateTo = document.getElementById('mapDateTo')?.value || '';
     const statsEl  = document.getElementById('mapStats');
     const cardEl   = document.getElementById('mapTxnCard');
     const listEl   = document.getElementById('mapTxnList');
     const countEl  = document.getElementById('mapTxnCount');
-
-    statsEl.textContent = located.length > 0
-      ? `共 ${located.length} 条带位置记录（总 ${txns.length} 条），` +
-        `消费合计 ¥${located.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0).toFixed(2)}`
-      : `暂无带位置的记录。记账时点击 📍 按钮可自动标记当前位置。`;
-
+    const legendEl = document.getElementById('mapLegend');
     const container = document.getElementById('mapContainer');
 
-    if (located.length === 0) {
-      container.innerHTML = '<div style="text-align:center;color:var(--text3);padding:48px 0;font-size:14px">📍 暂无位置数据<br><br>记账时点击「📍」按钮，<br>即可自动记录消费地点</div>';
+    if (dateFrom && dateTo && dateFrom > dateTo) {
+      if (this._leafletMap) {
+        this._leafletMap.remove();
+        this._leafletMap = null;
+      }
+      statsEl.textContent = '开始日期不能晚于结束日期，请重新选择。';
+      container.innerHTML = '<div class="map-empty">日期范围无效</div>';
       cardEl.style.display = 'none';
+      legendEl.style.display = 'none';
+      return;
+    }
+
+    const allTxns = await this.getTransactions(true);
+    const txns = filterMapTransactions(allTxns, { type: filter, month, dateFrom, dateTo });
+    const groups = aggregateMapLocations(txns);
+    const locatedCount = groups.reduce((sum, group) => sum + group.count, 0);
+    const locatedAmount = groups.reduce((sum, group) => sum + group.amount, 0);
+    const amountLabel = filter === 'expense' ? '支出合计' : filter === 'income' ? '收入合计' : '金额合计';
+
+    statsEl.textContent = groups.length > 0
+      ? `${locatedCount} 条带位置记录聚合为 ${groups.length} 个地点（筛选后共 ${txns.length} 条），` +
+        `${amountLabel} ¥${locatedAmount.toFixed(2)}`
+      : `暂无带位置的记录。记账时点击 📍 按钮可自动标记当前位置。`;
+
+    if (groups.length === 0) {
+      if (this._leafletMap) {
+        this._leafletMap.remove();
+        this._leafletMap = null;
+      }
+      container.innerHTML = '<div class="map-empty">📍 暂无位置数据<br><br>记账时点击「📍」按钮，<br>即可自动记录消费地点</div>';
+      cardEl.style.display = 'none';
+      legendEl.style.display = 'none';
       return;
     }
 
@@ -2243,8 +2342,8 @@ const App = {
     }
 
     const center = [
-      located.reduce((s, t) => s + t.lat, 0) / located.length,
-      located.reduce((s, t) => s + t.lng, 0) / located.length,
+      groups.reduce((s, group) => s + group.lat, 0) / groups.length,
+      groups.reduce((s, group) => s + group.lng, 0) / groups.length,
     ];
 
     const map = L.map(container, { zoomControl: true }).setView(center, 13);
@@ -2255,9 +2354,13 @@ const App = {
       maxZoom: 19,
     }).addTo(map);
 
-    // 热力图点：[lat, lng, intensity]
-    const maxAmt = Math.max(...located.map(t => t.amount), 1);
-    const heatPoints = located.map(t => [t.lat, t.lng, t.amount / maxAmt]);
+    if (groups.length > 1) {
+      map.fitBounds(groups.map(group => [group.lat, group.lng]), { padding: [24, 24], maxZoom: 15 });
+    }
+
+    // 同一地点先合计金额，再计算相对热度，避免交易笔数多的地点被重复计算。
+    const maxAmt = Math.max(...groups.map(group => group.amount), 1);
+    const heatPoints = groups.map(group => [group.lat, group.lng, group.amount / maxAmt]);
 
     if (typeof L.heatLayer !== 'undefined') {
       L.heatLayer(heatPoints, {
@@ -2266,40 +2369,53 @@ const App = {
       }).addTo(map);
     }
 
-    // 标记点（按金额大小显示）
-    located.forEach(t => {
-      const color = t.type === 'expense' ? '#D63031' : '#00B894';
-      const r     = Math.max(8, Math.min(20, 8 + (t.amount / maxAmt) * 12));
+    // 标记点（按地点聚合金额大小显示）
+    groups.forEach(group => {
+      const color = filter === 'income' ? '#00B894' : filter === 'expense' ? '#D63031' : '#6C5CE7';
+      const r = Math.max(8, Math.min(20, 8 + (group.amount / maxAmt) * 12));
       const icon  = L.divIcon({
         html: `<div style="width:${r*2}px;height:${r*2}px;border-radius:50%;background:${color};opacity:0.75;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.3)"></div>`,
         iconSize: [r*2, r*2],
         iconAnchor: [r, r],
         className: '',
       });
-      L.marker([t.lat, t.lng], { icon })
-        .bindPopup(`<b>${escapeHtml(t.categoryIcon)} ${escapeHtml(t.categoryName)}</b><br>¥${t.amount}<br>${escapeHtml(t.date)}${t.locationName ? '<br>📍 '+escapeHtml(t.locationName) : ''}${t.note ? '<br>'+escapeHtml(t.note) : ''}`)
+      const location = group.locationName || `${group.lat.toFixed(4)}, ${group.lng.toFixed(4)}`;
+      const categories = group.categories.length ? `<br>${escapeHtml(group.categories.join('、'))}` : '';
+      L.marker([group.lat, group.lng], { icon })
+        .bindPopup(`<b>📍 ${escapeHtml(location)}</b><br>${group.count} 笔，合计 ¥${group.amount.toFixed(2)}${categories}`)
         .addTo(map);
     });
 
-    // 列表
+    legendEl.style.display = 'flex';
     cardEl.style.display = '';
-    countEl.textContent  = `${located.length}条`;
-    listEl.innerHTML     = [...located]
-      .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-      .map(t => `
+    countEl.textContent  = `${groups.length}个地点`;
+    listEl.innerHTML = groups.map(group => {
+      const location = group.locationName || `${group.lat.toFixed(4)}, ${group.lng.toFixed(4)}`;
+      const categories = group.categories.length ? group.categories.join('、') : '未分类';
+      const sign = filter === 'expense' ? '-' : filter === 'income' ? '+' : '';
+      const amountClass = filter === 'income' ? 'in' : filter === 'expense' ? 'out' : '';
+      return `
         <li class="txn-item">
           <div class="txn-left">
-            <div class="txn-icon">${escapeHtml(t.categoryIcon)}</div>
+            <div class="txn-icon">📍</div>
             <div class="txn-info">
-              <div class="txn-name">${escapeHtml(t.categoryName)}</div>
+              <div class="txn-name">${escapeHtml(location)}</div>
               <div class="txn-meta">
-                📍 ${t.locationName ? escapeHtml(t.locationName) : `${(+t.lat).toFixed(3)}, ${(+t.lng).toFixed(3)}`}
-                &nbsp;·&nbsp;${escapeHtml(t.date)}
+                ${group.count} 笔&nbsp;·&nbsp;${escapeHtml(categories)}${group.latestDate ? `&nbsp;·&nbsp;最近 ${escapeHtml(group.latestDate)}` : ''}
               </div>
             </div>
           </div>
-          <div class="txn-amount ${t.type}">${t.type==='expense'?'-':'+'}¥${t.amount.toFixed(2)}</div>
-        </li>`).join('');
+          <div class="txn-amount ${amountClass}">${sign}¥${group.amount.toFixed(2)}</div>
+        </li>`;
+    }).join('');
+  },
+
+  resetMapFilters() {
+    document.getElementById('mapTypeFilter').value = 'expense';
+    document.getElementById('mapMonthFilter').value = '';
+    document.getElementById('mapDateFrom').value = '';
+    document.getElementById('mapDateTo').value = '';
+    this.renderMap();
   },
 
   async collectAllData(syncVersion = Date.now()) {
@@ -2780,6 +2896,51 @@ const App = {
     setTimeout(() => el.classList.remove('show'), 300);
   },
 
+  showConfirm({ title, message, confirmText = '确认', action }) {
+    this._confirmAction = action;
+    this._confirmBusy = false;
+    document.getElementById('confirmTitle').textContent = title;
+    document.getElementById('confirmMessage').textContent = message;
+    document.getElementById('confirmError').textContent = '';
+    document.getElementById('confirmError').hidden = true;
+    const button = document.getElementById('confirmSubmitBtn');
+    button.textContent = confirmText;
+    button.dataset.defaultText = confirmText;
+    button.disabled = false;
+    this.openModal('confirmModal');
+  },
+
+  cancelConfirm() {
+    if (this._confirmBusy) return;
+    this._confirmAction = null;
+    this.closeModal('confirmModal');
+  },
+
+  async submitConfirm() {
+    if (!this._confirmAction || this._confirmBusy) return;
+    const action = this._confirmAction;
+    const button = document.getElementById('confirmSubmitBtn');
+    const errorEl = document.getElementById('confirmError');
+    this._confirmBusy = true;
+    button.disabled = true;
+    button.textContent = '处理中…';
+    errorEl.hidden = true;
+    try {
+      await action();
+      this._confirmAction = null;
+      this.closeModal('confirmModal');
+    } catch (error) {
+      const reason = error?.message || '未知错误';
+      errorEl.textContent = `删除失败：${reason}`;
+      errorEl.hidden = false;
+      this.toast(`删除失败：${reason}`);
+    } finally {
+      this._confirmBusy = false;
+      button.disabled = false;
+      button.textContent = button.dataset.defaultText || '确认';
+    }
+  },
+
   // ======================== Toast ========================
   toast(msg) {
     const el = document.getElementById('toast');
@@ -2802,7 +2963,9 @@ document.addEventListener('click', e => {
 
 // 点背景关闭弹窗
 document.addEventListener('click', e => {
-  if (e.target.classList.contains('modal-overlay')) App.closeModal(e.target.id);
+  if (!e.target.classList.contains('modal-overlay')) return;
+  if (e.target.id === 'confirmModal') App.cancelConfirm();
+  else App.closeModal(e.target.id);
 });
 
 // ======================== 启动 ========================

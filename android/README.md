@@ -3,7 +3,7 @@
 This directory contains the Trusted Web Activity wrapper for the existing Shared Ledger PWA.
 
 - Package: `com.xingleihuang.sharedledger`
-- Version: `1.2.1` (`versionCode` 10201)
+- Version: `1.2.2` (`versionCode` 10202)
 - Web origin: `https://xingleihuang850-lang.github.io`
 - Start URL: `https://xingleihuang850-lang.github.io/shared-ledger/?source=pwa`
 - Minimum Android version: Android 6.0 (API 23)

@@ -17,7 +17,7 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 
   <!-- 样式（独立文件，可被 SW 长期缓存）-->
-  <link rel="stylesheet" href="app.css?v=1.2.1">
+  <link rel="stylesheet" href="app.css?v=1.2.2">
 
   <!-- Chart.js：defer 加载，不阻塞首屏 -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
@@ -322,23 +322,43 @@
         <select class="form-select" id="mapTypeFilter"
                 style="width:auto;padding:5px 10px;font-size:12px"
                 onchange="App.renderMap()">
-          <option value="">全部</option>
-          <option value="expense">支出</option>
+          <option value="expense" selected>支出</option>
           <option value="income">收入</option>
+          <option value="">全部</option>
         </select>
       </div>
+    </div>
+    <div class="map-filters" aria-label="热力图筛选条件">
+      <label>
+        <span>月份</span>
+        <input class="form-input" type="month" id="mapMonthFilter" onchange="App.renderMap()">
+      </label>
+      <label>
+        <span>开始日期</span>
+        <input class="form-input" type="date" id="mapDateFrom" onchange="App.renderMap()">
+      </label>
+      <label>
+        <span>结束日期</span>
+        <input class="form-input" type="date" id="mapDateTo" onchange="App.renderMap()">
+      </label>
+      <button class="btn btn-outline map-filter-reset" type="button" onclick="App.resetMapFilters()">重置</button>
     </div>
     <div id="mapStats" style="font-size:12px;color:var(--text3);margin-bottom:8px;padding:0 4px">
       加载中…
     </div>
     <div id="mapContainer"></div>
+    <div class="map-legend" id="mapLegend" style="display:none" aria-label="热力颜色图例">
+      <span>相对金额低</span>
+      <span class="map-legend-gradient" aria-hidden="true"></span>
+      <span>高</span>
+    </div>
   </div>
 
   <!-- 带坐标的消费列表 -->
   <div class="card" id="mapTxnCard" style="display:none">
     <div class="card-header">
-      <span class="card-title">📍 带位置的记录</span>
-      <span class="card-sub" id="mapTxnCount">0条</span>
+      <span class="card-title">📍 地点汇总</span>
+      <span class="card-sub" id="mapTxnCount">0个地点</span>
     </div>
     <ul class="txn-list" id="mapTxnList"></ul>
   </div>
@@ -823,6 +843,24 @@
   </div>
 </div>
 
+<!-- 应用内确认弹窗 -->
+<div class="modal-overlay confirm-overlay" id="confirmModal"
+     role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle"
+     aria-describedby="confirmMessage">
+  <div class="modal confirm-modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="confirmTitle">确认操作</div>
+    <p class="confirm-message" id="confirmMessage"></p>
+    <p class="confirm-error" id="confirmError" role="alert" hidden></p>
+    <div class="confirm-actions">
+      <button class="btn btn-outline" type="button" id="confirmCancelBtn"
+              onclick="App.cancelConfirm()">取消</button>
+      <button class="btn btn-danger" type="button" id="confirmSubmitBtn"
+              onclick="App.submitConfirm()">确认</button>
+    </div>
+  </div>
+</div>
+
 <!-- Gist 同步弹窗 -->
 <div class="modal-overlay" id="syncModal"
      role="dialog" aria-modal="true" aria-label="数据同步">
@@ -876,7 +914,7 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <!-- 应用逻辑（独立文件，可被 SW 长期缓存）-->
-<script src="app.js?v=1.2.1" defer></script>
+<script src="app.js?v=1.2.2" defer></script>
 
 </body>
 </html>
