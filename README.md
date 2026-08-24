@@ -46,6 +46,7 @@ shared-ledger/
 ├── app.js       # 全部业务逻辑（IndexedDB / 渲染 / 同步）
 ├── sw.js        # Service Worker（离线缓存）
 ├── manifest.json
+├── LICENSE      # MIT 开源许可证
 └── README.md
 ```
 
@@ -75,3 +76,9 @@ python3 -m http.server 8080
 - [x] 分类个性化图标（自定义图片 URL 或上传）
 - [x] Excel 导出（账单明细 + 月度汇总 .xlsx）
 - [ ] 跨设备同步（WebDAV）
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE) 开源。你可以使用、复制、修改、合并、发布、分发、再许可及销售本软件的副本，但必须在软件的所有副本或主要部分中保留原始版权声明和许可证声明。
+
+本软件按“原样”提供，不附带任何明示或默示担保。完整条款请参阅 [LICENSE](LICENSE)。
