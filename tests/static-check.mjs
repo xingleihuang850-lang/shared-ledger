@@ -30,10 +30,19 @@ for (const asset of precached) {
   assert.ok(existsSync(join(root, asset)), `sw.js 预缓存了不存在的文件：${asset}`);
 }
 
-assert.match(read('app.js'), /const APP_VERSION = '1\.2\.0'/);
+assert.match(read('app.js'), /const APP_VERSION = '1\.2\.1'/);
 assert.match(read('app.js'), /const BACKUP_FORMAT_VERSION = 2/);
-assert.match(html, /app\.js\?v=1\.2\.0/);
-assert.match(sw, /ledger-v8-20260824/);
+assert.match(html, /app\.js\?v=1\.2\.1/);
+assert.match(sw, /ledger-v9-20260824/);
+assert.ok(existsSync(join(root, 'android', 'gradlew')), '缺少 Android Gradle Wrapper');
+assert.ok(existsSync(join(root, '.github', 'workflows', 'android-release.yml')), '缺少 Android Release 工作流');
+const twaManifest = JSON.parse(read('android/twa-manifest.json'));
+assert.equal(twaManifest.packageId, 'com.xingleihuang.sharedledger');
+assert.equal(twaManifest.appVersionName, '1.2.1');
+assert.equal(twaManifest.appVersionCode, 10201);
+assert.equal(twaManifest.minSdkVersion, 23);
+assert.equal(twaManifest.fingerprints.length, 1);
+assert.doesNotMatch(twaManifest.signingKey.path, /^\//, '签名路径不能泄露本机绝对路径');
 assert.doesNotMatch(html + read('README.md'), /agentos-app\.net/);
 
 console.log('静态检查通过：JS、JSON、页面资源、离线缓存和版本号均有效。');

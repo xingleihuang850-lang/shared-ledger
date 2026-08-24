@@ -1,0 +1,56 @@
+{
+  "packageId": "com.xingleihuang.sharedledger",
+  "host": "xingleihuang850-lang.github.io",
+  "name": "共享账本",
+  "launcherName": "账本",
+  "display": "standalone",
+  "themeColor": "#2D3436",
+  "themeColorDark": "#000000",
+  "navigationColor": "#000000",
+  "navigationColorDark": "#000000",
+  "navigationDividerColor": "#000000",
+  "navigationDividerColorDark": "#000000",
+  "backgroundColor": "#F5F5F0",
+  "enableNotifications": false,
+  "startUrl": "/shared-ledger/?source=pwa",
+  "iconUrl": "https://xingleihuang850-lang.github.io/shared-ledger/icons/icon-512.png",
+  "maskableIconUrl": "https://xingleihuang850-lang.github.io/shared-ledger/icons/maskable-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "release.keystore",
+    "alias": "shared-ledger"
+  },
+  "appVersionName": "1.2.1",
+  "appVersionCode": 10201,
+  "shortcuts": [],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://xingleihuang850-lang.github.io/shared-ledger/manifest.json",
+  "fallbackType": "customtabs",
+  "features": {
+    "locationDelegation": {
+      "enabled": true
+    }
+  },
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://xingleihuang850-lang.github.io/shared-ledger/",
+  "minSdkVersion": 23,
+  "orientation": "portrait-primary",
+  "fingerprints": [
+    "7F:EA:0F:B1:48:30:BC:B0:68:D5:1F:CB:43:96:9F:B3:1B:C3:4C:A9:35:F7:2F:07:BE:4B:5C:8E:D4:45:91:8D"
+  ],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": [],
+  "protocolHandlers": [],
+  "fileHandlers": [],
+  "launchHandlerClientMode": "",
+  "displayOverride": [
+    "standalone",
+    "minimal-ui"
+  ],
+  "appVersion": "1.2.1"
+}

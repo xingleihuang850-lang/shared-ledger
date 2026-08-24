@@ -6,7 +6,7 @@
 // ======================== 常量 ========================
 const DB_NAME = 'sharedLedger';
 const DB_VER  = 7;   // v7: 新增 snapshots store，用于恢复前自动快照
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 const BACKUP_FORMAT_VERSION = 2;
 const DATA_STORES = [
   'transactions', 'categories', 'users', 'settings',
@@ -565,15 +565,24 @@ const App = {
       await promptEvent.prompt();
       const choice = await promptEvent.userChoice;
       this.updateInstallUI();
-      this.toast(choice.outcome === 'accepted' ? '✅ 安装完成' : '已取消安装');
+      if (choice.outcome === 'accepted') {
+        this.toast('✅ 安装完成');
+      } else {
+        this.toast('浏览器安装已取消，也可以下载正式 APK');
+        this.showInstallGuide();
+      }
       return;
     }
 
+    this.showInstallGuide();
+  },
+
+  showInstallGuide() {
     const text = document.getElementById('installGuideText');
     if (this.isIOS()) {
       text.innerHTML = '<b>iPhone / iPad：</b><br>请使用 Safari 打开本页面，点击底部“分享”按钮，然后选择“添加到主屏幕”。';
     } else {
-      text.innerHTML = '<b>Android：</b><br>请使用 Chrome 打开本页面，点击右上角菜单，选择“安装应用”或“添加到主屏幕”。';
+      text.innerHTML = '<b>Android 有两种安装方式：</b><br>① 使用支持 PWA 的浏览器选择“安装应用”或“添加到主屏幕”；<br>② 从 GitHub Releases 下载正式签名 APK。APK 安装后仍会打开同一在线账本，联网启动即可使用最新网页版本。';
     }
     this.openModal('installGuideModal');
   },

@@ -17,7 +17,7 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 
   <!-- 样式（独立文件，可被 SW 长期缓存）-->
-  <link rel="stylesheet" href="app.css?v=1.2.0">
+  <link rel="stylesheet" href="app.css?v=1.2.1">
 
   <!-- Chart.js：defer 加载，不阻塞首屏 -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
@@ -864,6 +864,9 @@
     <div class="modal-handle"></div>
     <div class="modal-title">📲 安装共享账本</div>
     <div id="installGuideText" style="font-size:14px;line-height:1.8;color:var(--text2)"></div>
+    <a class="btn btn-outline" style="margin-top:16px;text-decoration:none;text-align:center"
+       href="https://github.com/xingleihuang850-lang/shared-ledger/releases/latest"
+       target="_blank" rel="noopener noreferrer">下载 Android APK</a>
     <button class="btn btn-primary" style="margin-top:16px"
             onclick="App.closeModal('installGuideModal')">知道了</button>
   </div>
@@ -873,7 +876,7 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <!-- 应用逻辑（独立文件，可被 SW 长期缓存）-->
-<script src="app.js?v=1.2.0" defer></script>
+<script src="app.js?v=1.2.1" defer></script>
 
 </body>
 </html>

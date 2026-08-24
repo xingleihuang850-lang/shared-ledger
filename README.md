@@ -40,6 +40,7 @@
 - SheetJS 0.18 Excel 导出（含月度汇总 Sheet）
 - Leaflet 1.9 + leaflet.heat 消费地图热力图（OpenStreetMap，免费无需 Key）
 - Service Worker + Manifest 实现 PWA 安装与离线可用
+- Android Trusted Web Activity（TWA）提供正式签名 APK，继续使用同一 PWA 数据与更新机制
 
 ## 文件结构
 
@@ -53,10 +54,12 @@ shared-ledger/
 ├── PRIVACY.md   # 隐私与外部数据传输说明
 ├── LICENSE      # MIT 开源许可证
 ├── tests/       # 静态检查与浏览器端回归测试
+├── android/     # Android TWA 工程（正式签名 APK）
 ├── playwright.config.js
 ├── package.json
 ├── package-lock.json
 ├── .github/workflows/ci.yml
+├── .github/workflows/android-release.yml
 └── README.md
 ```
 
@@ -73,10 +76,22 @@ python3 -m http.server 8080
 
 ## 安装到手机
 
-- **Android**：使用 Chrome 打开在线地址，点击应用内“设置 → 安装到手机”，或在浏览器菜单中选择“安装应用”。
+- **Android PWA**：使用支持 PWA 安装的浏览器打开在线地址，点击应用内“设置 → 安装到手机”，或在浏览器菜单中选择“安装应用”。
+- **Android APK（Android 6.0 及以上）**：前往 [GitHub Releases](https://github.com/xingleihuang850-lang/shared-ledger/releases/latest) 下载 `shared-ledger-android-v*.apk`。首次侧载时，Android 可能要求允许当前浏览器或文件管理器“安装未知应用”。
 - **iPhone / iPad**：使用 Safari 打开在线地址，点击“分享 → 添加到主屏幕”。
 
-安装的是 PWA 版本，无需单独下载 APK 或 IPA；后续发布更新后，应用会在联网启动时自动获取新版本。
+PWA 与 APK 使用同一在线应用和 IndexedDB 本地数据。网页功能更新会在联网启动时通过 Service Worker 自动获取；涉及 Android 原生外壳、权限或依赖的更新会发布新的正式签名 APK，需要从 Releases 下载并覆盖安装。请始终从本仓库 Releases 获取 APK，并核对同一 Release 中的 `SHA256SUMS.txt`。
+
+## Android 自动发布
+
+推送形如 `v1.2.1` 的版本标签后，GitHub Actions 会自动：
+
+1. 从仓库加密 Secrets 恢复发布签名；
+2. 使用 Gradle 构建正式签名 APK；
+3. 使用 Android `apksigner` 校验签名；
+4. 将 APK、PWA ZIP 和 SHA-256 校验文件上传到 GitHub Releases。
+
+签名私钥不进入 Git 仓库。本地私钥必须长期安全备份；Android 要求后续覆盖升级继续使用同一签名证书。
 
 ## 数据说明
 
