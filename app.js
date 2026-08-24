@@ -5,7 +5,14 @@
 
 // ======================== 常量 ========================
 const DB_NAME = 'sharedLedger';
-const DB_VER  = 6;   // v6: settings store 改用 keyPath:'key'（修复 keyPath 不匹配导致写入失败的 bug）
+const DB_VER  = 7;   // v7: 新增 snapshots store，用于恢复前自动快照
+const APP_VERSION = '1.2.0';
+const BACKUP_FORMAT_VERSION = 2;
+const DATA_STORES = [
+  'transactions', 'categories', 'users', 'settings',
+  'badges', 'wishes', 'recurring',
+];
+const SNAPSHOT_STORE = 'snapshots';
 
 const DEFAULT_EXPENSE_CATS = [
   { id: 'e1',  name: '餐饮', icon: '🍜', type: 'expense' },
@@ -55,6 +62,9 @@ function openDB() {
             idb.createObjectStore(storeName, { keyPath: 'id' });
           }
         });
+      if (!idb.objectStoreNames.contains(SNAPSHOT_STORE)) {
+        idb.createObjectStore(SNAPSHOT_STORE, { keyPath: 'id' });
+      }
     };
     req.onsuccess = (e) => { db = e.target.result; resolve(db); };
     req.onerror   = ()  => reject(req.error);
@@ -66,7 +76,10 @@ function dbPut(storeName, record) {
     const tx    = db.transaction(storeName, 'readwrite');
     const store = tx.objectStore(storeName);
     store.put(record);
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => {
+      markLocalDataChanged(storeName);
+      resolve();
+    };
     tx.onerror    = () => reject(tx.error);
   });
 }
@@ -77,7 +90,10 @@ function dbPutBatch(storeName, records) {
     const tx    = db.transaction(storeName, 'readwrite');
     const store = tx.objectStore(storeName);
     records.forEach(r => store.put(r));
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => {
+      markLocalDataChanged(storeName);
+      resolve();
+    };
     tx.onerror    = () => reject(tx.error);
   });
 }
@@ -107,7 +123,10 @@ function dbDelete(storeName, key) {
     const tx    = db.transaction(storeName, 'readwrite');
     const store = tx.objectStore(storeName);
     store.delete(key);
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => {
+      markLocalDataChanged(storeName);
+      resolve();
+    };
     tx.onerror    = () => reject(tx.error);
   });
 }
@@ -117,9 +136,110 @@ function dbClear(storeName) {
     const tx    = db.transaction(storeName, 'readwrite');
     const store = tx.objectStore(storeName);
     store.clear();
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => {
+      markLocalDataChanged(storeName);
+      resolve();
+    };
     tx.onerror    = () => reject(tx.error);
   });
+}
+
+function markLocalDataChanged(storeName) {
+  if (DATA_STORES.includes(storeName)) {
+    localStorage.setItem('ledgerLocalDirty', '1');
+  }
+}
+
+/**
+ * 在一个 IndexedDB 事务中替换全部业务数据。任一写入失败会整体回滚。
+ */
+function dbReplaceAll(data) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(DATA_STORES, 'readwrite');
+    try {
+      for (const storeName of DATA_STORES) {
+        const store = tx.objectStore(storeName);
+        store.clear();
+        for (const record of data[storeName] || []) store.put(record);
+      }
+    } catch (err) {
+      tx.abort();
+      reject(err);
+      return;
+    }
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error('数据库写入失败'));
+    tx.onabort = () => reject(tx.error || new Error('数据库事务已回滚'));
+  });
+}
+
+function normalizeBackupData(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('备份根节点必须是对象');
+  }
+
+  const sourceVersion = Number(raw.formatVersion || 1);
+  if (!Number.isInteger(sourceVersion) || sourceVersion < 1) {
+    throw new Error('备份版本无效');
+  }
+  if (sourceVersion > BACKUP_FORMAT_VERSION) {
+    throw new Error(`该备份来自更新版本（v${sourceVersion}），请先升级应用`);
+  }
+
+  const data = {
+    formatVersion: BACKUP_FORMAT_VERSION,
+    appVersion: String(raw.appVersion || 'legacy'),
+    exportedAt: raw.exportedAt || new Date().toISOString(),
+    syncVersion: Number(raw.syncVersion) || 0,
+  };
+
+  for (const storeName of DATA_STORES) {
+    const rows = raw[storeName] == null ? [] : raw[storeName];
+    if (!Array.isArray(rows)) throw new Error(`${storeName} 必须是数组`);
+    data[storeName] = rows.map(row => {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        throw new Error(`${storeName} 中存在无效记录`);
+      }
+      return { ...row };
+    });
+  }
+
+  // v1 settings 可能使用 id 作为键；迁移为 v2 的 {key,value}。
+  data.settings = data.settings
+    .map(row => ({ key: String(row.key || row.id || ''), value: row.value }))
+    .filter(row => row.key);
+
+  const settingKeys = new Set();
+  for (const row of data.settings) {
+    if (settingKeys.has(row.key)) throw new Error(`settings 存在重复 key：${row.key}`);
+    settingKeys.add(row.key);
+  }
+
+  for (const storeName of DATA_STORES.filter(name => name !== 'settings')) {
+    const ids = new Set();
+    for (const row of data[storeName]) {
+      if (row.id == null || String(row.id) === '') throw new Error(`${storeName} 记录缺少 id`);
+      const id = String(row.id);
+      if (ids.has(id)) throw new Error(`${storeName} 存在重复 id：${id}`);
+      ids.add(id);
+      row.id = id;
+    }
+  }
+
+  for (const txn of data.transactions) {
+    txn.amount = Number(txn.amount);
+    if (!Number.isFinite(txn.amount) || txn.amount <= 0) throw new Error('交易金额无效');
+    if (!['income', 'expense'].includes(txn.type)) throw new Error('交易类型无效');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(txn.date || ''))) throw new Error('交易日期无效');
+  }
+
+  if (data.users.length === 0) {
+    data.users.push({ id: 'u1', name: '我', color: USER_COLORS[0] });
+  }
+  if (data.categories.length === 0) {
+    data.categories.push(...DEFAULT_EXPENSE_CATS.map(x => ({ ...x })), ...DEFAULT_INCOME_CATS.map(x => ({ ...x })));
+  }
+  return data;
 }
 
 // ======================== 粒子系统 ========================
@@ -456,6 +576,10 @@ const App = {
       text.innerHTML = '<b>Android：</b><br>请使用 Chrome 打开本页面，点击右上角菜单，选择“安装应用”或“添加到主屏幕”。';
     }
     this.openModal('installGuideModal');
+  },
+
+  showPrivacyNotice() {
+    this.openModal('privacyModal');
   },
 
   // ======================== 特效 ========================
@@ -1935,24 +2059,19 @@ const App = {
 
   // ======================== 导入导出 ========================
   async exportData() {
-    const [transactions, categories, users, settings, badges, wishes, recurring] = await Promise.all([
-      dbGetAll('transactions'),
-      dbGetAll('categories'),
-      dbGetAll('users'),
-      dbGetAll('settings'),
-      dbGetAll('badges'),
-      dbGetAll('wishes'),
-      dbGetAll('recurring'),
-    ]);
-    const data = JSON.stringify({ transactions, categories, users, settings, badges, wishes, recurring }, null, 2);
-    const blob = new Blob([data], { type: 'application/json' });
+    const data = await this.collectAllData();
+    this.downloadBackup(data, `账本备份_v${BACKUP_FORMAT_VERSION}_${todayStr()}.json`);
+    this.toast('导出成功');
+  },
+
+  downloadBackup(data, filename) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
     a.href     = url;
-    a.download = `账本备份_${todayStr()}.json`;
+    a.download = filename;
     a.click();
-    URL.revokeObjectURL(url);
-    this.toast('导出成功');
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   },
 
   // ======================== Excel 导出 ========================
@@ -2020,6 +2139,13 @@ const App = {
     if (!navigator.geolocation) {
       this.toast('当前浏览器不支持定位');
       return;
+    }
+    if (localStorage.getItem('ledgerLocationDisclosure') !== 'accepted') {
+      if (!confirm(
+        '定位会读取你的精确位置，并将经纬度发送给 OpenStreetMap Nominatim 以查询地点名称。\n' +
+        '位置也会保存在这笔账目中。是否继续？'
+      )) return;
+      localStorage.setItem('ledgerLocationDisclosure', 'accepted');
     }
     const btn  = document.getElementById('gpsBtn');
     const hint = document.getElementById('locHint');
@@ -2167,6 +2293,72 @@ const App = {
         </li>`).join('');
   },
 
+  async collectAllData(syncVersion = Date.now()) {
+    const values = await Promise.all(DATA_STORES.map(storeName => dbGetAll(storeName)));
+    const data = {
+      formatVersion: BACKUP_FORMAT_VERSION,
+      appVersion: APP_VERSION,
+      exportedAt: new Date().toISOString(),
+      syncVersion,
+    };
+    DATA_STORES.forEach((storeName, index) => { data[storeName] = values[index]; });
+    return data;
+  },
+
+  async saveRecoverySnapshot(reason, data = null) {
+    const payload = normalizeBackupData(data || await this.collectAllData());
+    const snapshot = {
+      id: `snapshot_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      reason,
+      createdAt: new Date().toISOString(),
+      data: payload,
+    };
+    await dbPut(SNAPSHOT_STORE, snapshot);
+
+    const snapshots = await dbGetAll(SNAPSHOT_STORE);
+    const stale = snapshots
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+      .slice(5);
+    await Promise.all(stale.map(item => dbDelete(SNAPSHOT_STORE, item.id)));
+    return snapshot;
+  },
+
+  async refreshAfterDataReplace() {
+    await this.initUsers();
+    await this.initCategories();
+    this.renderCats();
+    await this.render();
+  },
+
+  async replaceWithBackup(raw, { reason = '数据恢复', markSynced = false } = {}) {
+    const normalized = normalizeBackupData(raw);
+    const before = await this.collectAllData();
+    await this.saveRecoverySnapshot(`${reason}前自动快照`, before);
+    await dbReplaceAll(normalized);
+    if (markSynced) {
+      localStorage.setItem('ledgerLocalDirty', '0');
+      localStorage.setItem('ledgerLastSyncedVersion', String(normalized.syncVersion || 0));
+    } else {
+      localStorage.setItem('ledgerLocalDirty', '1');
+    }
+    await this.refreshAfterDataReplace();
+    return normalized;
+  },
+
+  async restoreLatestSnapshot() {
+    const snapshots = await dbGetAll(SNAPSHOT_STORE);
+    const latest = snapshots.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))[0];
+    if (!latest) return this.toast('暂无自动恢复点');
+    const time = new Date(latest.createdAt).toLocaleString('zh-CN');
+    if (!confirm(`恢复自动快照？\n${time}\n${latest.reason || ''}\n\n当前数据也会先保存为新的恢复点。`)) return;
+    try {
+      await this.replaceWithBackup(latest.data, { reason: '恢复历史快照' });
+      this.toast('✅ 已恢复自动快照');
+    } catch (err) {
+      this.toast('恢复失败：' + (err.message || '未知错误'));
+    }
+  },
+
   importData() {
     const input    = document.createElement('input');
     input.type     = 'file';
@@ -2176,41 +2368,36 @@ const App = {
       if (!file) return;
       const text = await file.text();
       try {
-        const d = JSON.parse(text);
-        await Promise.all([
-          d.transactions ? dbPutBatch('transactions', d.transactions) : Promise.resolve(),
-          d.categories   ? dbPutBatch('categories',   d.categories)   : Promise.resolve(),
-          d.users        ? dbPutBatch('users',         d.users)        : Promise.resolve(),
-          d.settings     ? dbPutBatch('settings',      d.settings)     : Promise.resolve(),
-          d.badges       ? dbPutBatch('badges',        d.badges)       : Promise.resolve(),
-          d.wishes       ? dbPutBatch('wishes',        d.wishes)       : Promise.resolve(),
-          d.recurring    ? dbPutBatch('recurring',     d.recurring)    : Promise.resolve(),
-        ]);
-        await this.initUsers();
-        this.render();
-        this.renderCats();
-        this.toast('数据导入成功');
-      } catch {
-        this.toast('导入失败，文件格式不正确');
+        const d = normalizeBackupData(JSON.parse(text));
+        if (!confirm(
+          `将用备份中的 ${d.transactions.length} 条记录替换当前账本。\n` +
+          `替换前会自动创建本地恢复点。\n\n确定继续？`
+        )) return;
+        await this.replaceWithBackup(d, { reason: '导入 JSON 备份' });
+        this.toast('✅ 数据导入成功');
+      } catch (err) {
+        this.toast('导入失败：' + (err.message || '文件格式不正确'));
       }
     };
     input.click();
   },
 
   async clearAll() {
-    if (!confirm('⚠️ 确定要清空所有数据吗？此操作不可恢复！')) return;
-    await Promise.all([
-      dbClear('transactions'), dbClear('categories'), dbClear('users'),
-      dbClear('settings'),     dbClear('badges'),     dbClear('wishes'), dbClear('recurring'),
-    ]);
-    await dbPutBatch('categories', [...DEFAULT_EXPENSE_CATS, ...DEFAULT_INCOME_CATS]);
-    // 重建默认用户，避免清空后 currentUser 悬空
-    const defaultUser = { id: 'u1', name: '我', color: USER_COLORS[0] };
-    await dbPut('users', defaultUser);
-    this.currentUser = defaultUser;
-    this.render();
-    this.renderCats();
-    this.toast('数据已清空');
+    if (!confirm('⚠️ 确定要清空所有数据吗？\n清空前会自动创建恢复点。')) return;
+    try {
+      await this.saveRecoverySnapshot('清空数据前自动快照');
+      const empty = normalizeBackupData({
+        formatVersion: BACKUP_FORMAT_VERSION,
+        transactions: [], categories: [], users: [], settings: [],
+        badges: [], wishes: [], recurring: [],
+      });
+      await dbReplaceAll(empty);
+      localStorage.setItem('ledgerLocalDirty', '1');
+      await this.refreshAfterDataReplace();
+      this.toast('数据已清空，可在设置中恢复');
+    } catch (err) {
+      this.toast('清空失败：' + (err.message || '未知错误'));
+    }
   },
 
   // ======================== CSV 账单导入 ========================
@@ -2392,17 +2579,44 @@ const App = {
   },
 
   // ======================== GitHub Gist 同步 ========================
+  getSyncToken() {
+    return sessionStorage.getItem('ledgerSyncToken') || localStorage.getItem('ledgerSyncToken') || '';
+  },
+
+  saveSyncTokenFromInput() {
+    const input = document.getElementById('syncToken');
+    const token = input.value.trim() || this.getSyncToken();
+    if (!token) { this.toast('请输入 GitHub Token'); return ''; }
+    const remember = document.getElementById('rememberSyncToken').checked;
+    sessionStorage.setItem('ledgerSyncToken', token);
+    if (remember) localStorage.setItem('ledgerSyncToken', token);
+    else localStorage.removeItem('ledgerSyncToken');
+    return token;
+  },
+
+  clearSyncToken() {
+    sessionStorage.removeItem('ledgerSyncToken');
+    localStorage.removeItem('ledgerSyncToken');
+    const input = document.getElementById('syncToken');
+    if (input) input.value = '';
+    const remember = document.getElementById('rememberSyncToken');
+    if (remember) remember.checked = false;
+    this.renderSyncStatus();
+    this.toast('Token 已从本设备清除');
+  },
+
   showSyncModal() {
     const el    = document.getElementById('syncToken');
-    const saved = localStorage.getItem('ledgerSyncToken');
+    const saved = this.getSyncToken();
     if (saved) el.value = saved;
+    document.getElementById('rememberSyncToken').checked = !!localStorage.getItem('ledgerSyncToken');
     this.renderSyncStatus();
     this.openModal('syncModal');
   },
 
   renderSyncStatus() {
     const statusEl  = document.getElementById('syncStatus');
-    const hasToken  = !!localStorage.getItem('ledgerSyncToken');
+    const hasToken  = !!this.getSyncToken();
     const gistId    = localStorage.getItem('ledgerGistId');
     const lastSync  = localStorage.getItem('ledgerSyncTime');
 
@@ -2417,7 +2631,7 @@ const App = {
   },
 
   async githubAPI(url, opts = {}) {
-    const token = localStorage.getItem('ledgerSyncToken');
+    const token = this.getSyncToken();
     if (!token) { this.toast('请先输入 GitHub Token'); return null; }
     const headers = {
       'Authorization': 'Bearer ' + token,
@@ -2457,33 +2671,47 @@ const App = {
     });
     if (!gist || !gist.id) return null;
     localStorage.setItem('ledgerGistId', gist.id);
+    localStorage.setItem('ledgerLastSyncedVersion', String(data.syncVersion));
+    localStorage.setItem('ledgerLocalDirty', '0');
     this.toast('📦 同步仓库已创建');
     return gist.id;
   },
 
-  async collectAllData() {
-    const [transactions, categories, users, settings, badges, wishes, recurring] = await Promise.all([
-      dbGetAll('transactions'),
-      dbGetAll('categories'),
-      dbGetAll('users'),
-      dbGetAll('settings'),
-      dbGetAll('badges'),
-      dbGetAll('wishes'),
-      dbGetAll('recurring'),
-    ]);
-    return { transactions, categories, users, settings, badges, wishes, recurring, syncVersion: Date.now() };
+  parseGistBackup(gist) {
+    const file = gist?.files?.['ledger_data.json'];
+    if (!file || typeof file.content !== 'string') throw new Error('云端备份文件不存在');
+    return normalizeBackupData(JSON.parse(file.content));
   },
 
   async pushSync() {
     if (!this.currentUser) { this.toast('请先选择用户'); return; }
-    const token = localStorage.getItem('ledgerSyncToken');
-    if (!token) {
-      const input = document.getElementById('syncToken').value.trim();
-      if (!input) { this.toast('请输入 GitHub Token'); return; }
-      localStorage.setItem('ledgerSyncToken', input);
-    }
+    if (!this.saveSyncTokenFromInput()) return;
     const gistId = await this.getGistId();
     if (!gistId) return;
+
+    const currentGist = await this.githubAPI('https://api.github.com/gists/' + gistId);
+    if (!currentGist) return;
+    try {
+      const remote = this.parseGistBackup(currentGist);
+      const lastSynced = Number(localStorage.getItem('ledgerLastSyncedVersion') || 0);
+      const remoteChanged = !!remote.syncVersion && (
+        lastSynced ? remote.syncVersion !== lastSynced : remote.transactions.length > 0
+      );
+      if (remoteChanged) {
+        await this.saveRecoverySnapshot('上传冲突：保留云端副本', remote);
+        if (!confirm(
+          '检测到云端已被另一台设备更新。\n' +
+          '云端版本已保存为本地恢复点。\n\n仍要用当前设备覆盖云端吗？'
+        )) {
+          this.toast('已取消上传，云端副本已保留');
+          return;
+        }
+      }
+    } catch (err) {
+      this.toast('云端数据校验失败：' + (err.message || '格式错误'));
+      return;
+    }
+
     const data = await this.collectAllData();
     const gist = await this.githubAPI('https://api.github.com/gists/' + gistId, {
       method: 'PATCH',
@@ -2492,56 +2720,40 @@ const App = {
     if (!gist) return;
     const now = new Date().toLocaleString('zh-CN');
     localStorage.setItem('ledgerSyncTime', now);
+    localStorage.setItem('ledgerLastSyncedVersion', String(data.syncVersion));
+    localStorage.setItem('ledgerLocalDirty', '0');
     this.toast(`☁️ 数据已上传 (${data.transactions.length} 条记录)`);
     this.renderSyncStatus();
   },
 
   async pullSync() {
     if (!this.currentUser) { this.toast('请先选择用户'); return; }
-    const token = localStorage.getItem('ledgerSyncToken');
-    if (!token) {
-      const input = document.getElementById('syncToken').value.trim();
-      if (!input) { this.toast('请输入 GitHub Token'); return; }
-      localStorage.setItem('ledgerSyncToken', input);
-    }
+    if (!this.saveSyncTokenFromInput()) return;
     const gistId = await this.getGistId();
     if (!gistId) return;
     const gist = await this.githubAPI('https://api.github.com/gists/' + gistId);
-    if (!gist || !gist.files || !gist.files['ledger_data.json']) return;
+    if (!gist) return;
     try {
-      const d = JSON.parse(gist.files['ledger_data.json'].content);
+      const d = this.parseGistBackup(gist);
+      const localDirty = localStorage.getItem('ledgerLocalDirty') === '1';
+      const lastSynced = Number(localStorage.getItem('ledgerLastSyncedVersion') || 0);
+      const remoteChanged = !!d.syncVersion && !!lastSynced && d.syncVersion !== lastSynced;
+      const conflictText = localDirty
+        ? '检测到本地有尚未上传的修改。继续下载前会把当前本地数据保存为恢复点。\n'
+        : remoteChanged ? '检测到云端版本已更新。\n' : '';
       if (!confirm(
-        `⚠️ 将用云端数据覆盖本地数据。\n` +
+        conflictText +
+        `将用云端数据替换本地账本。\n` +
         `云端有 ${d.transactions?.length || 0} 条记录。\n` +
-        `本地的所有修改将丢失！\n\n确定继续？`
+        `替换前会自动创建恢复点。\n\n确定继续？`
       )) return;
-
-      // 先清空所有 store
-      await Promise.all([
-        dbClear('transactions'), dbClear('categories'), dbClear('users'),
-        dbClear('settings'),     dbClear('badges'),     dbClear('wishes'), dbClear('recurring'),
-      ]);
-
-      // 批量写入（P2: 替代逐条串行写入）
-      await Promise.all([
-        d.transactions?.length ? dbPutBatch('transactions', d.transactions) : Promise.resolve(),
-        d.categories?.length   ? dbPutBatch('categories',   d.categories)   : Promise.resolve(),
-        d.users?.length        ? dbPutBatch('users',         d.users)        : Promise.resolve(),
-        d.settings?.length     ? dbPutBatch('settings',      d.settings)     : Promise.resolve(),
-        d.badges?.length       ? dbPutBatch('badges',        d.badges)       : Promise.resolve(),
-        d.wishes?.length       ? dbPutBatch('wishes',        d.wishes)       : Promise.resolve(),
-        d.recurring?.length    ? dbPutBatch('recurring',     d.recurring)    : Promise.resolve(),
-      ]);
-
+      await this.replaceWithBackup(d, { reason: '云端同步', markSynced: true });
       const now = new Date().toLocaleString('zh-CN');
       localStorage.setItem('ledgerSyncTime', now);
-      await this.initUsers();
-      this.render();
-      this.renderCats();
       this.renderSyncStatus();
       this.toast(`✅ 同步完成 (${d.transactions?.length || 0} 条记录)`);
-    } catch {
-      this.toast('同步失败: 数据格式异常');
+    } catch (err) {
+      this.toast('同步失败：' + (err.message || '数据格式异常'));
     }
   },
 

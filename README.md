@@ -23,6 +23,9 @@
 - 📂 **CSV 账单导入**：支持支付宝 / 微信 CSV 账单一键导入（自动去重 + 分类识别）
 - ☁️ **跨设备同步**：通过 GitHub Gist 将数据备份到你的私有仓库（明文 JSON），多设备同步
 - 💾 **JSON 数据导入导出**：随时备份与恢复全量数据
+- 🛟 **安全恢复**：导入、云端下载和清空前自动保留恢复点，整库写入失败时自动回滚
+- 🧩 **备份兼容**：备份格式带版本号，旧版数据自动迁移，未知新版会被安全拒绝
+- 🛡️ **同步冲突保护**：发现另一台设备已更新时先保留副本，再由用户决定是否覆盖
 - 📊 **Excel 导出**：一键生成包含「账单明细」+「月度汇总」两个 Sheet 的 .xlsx 文件
 - 📅 **定期收支自动记账**：设置每日 / 每周 / 每月重复项（房租/工资/订阅），打开 App 自动补录逾期记录
 - 🎨 **分类个性化图标**：每个分类可绑定自定义图片（URL 或从相册上传，自动压缩 64×64）
@@ -32,7 +35,7 @@
 ## 技术栈
 
 - 原生 HTML5 + CSS3 + JavaScript（无框架、无构建工具，浏览器直接运行）
-- IndexedDB 本地持久化（7 个数据 Store：transactions / categories / users / settings / badges / wishes / recurring）
+- IndexedDB 本地持久化（7 个业务 Store + 1 个自动恢复快照 Store）
 - Chart.js 4.4 图表（`defer` 加载，不阻塞首屏）
 - SheetJS 0.18 Excel 导出（含月度汇总 Sheet）
 - Leaflet 1.9 + leaflet.heat 消费地图热力图（OpenStreetMap，免费无需 Key）
@@ -47,7 +50,13 @@ shared-ledger/
 ├── app.js       # 全部业务逻辑（IndexedDB / 渲染 / 同步）
 ├── sw.js        # Service Worker（离线缓存）
 ├── manifest.json
+├── PRIVACY.md   # 隐私与外部数据传输说明
 ├── LICENSE      # MIT 开源许可证
+├── tests/       # 静态检查与浏览器端回归测试
+├── playwright.config.js
+├── package.json
+├── package-lock.json
+├── .github/workflows/ci.yml
 └── README.md
 ```
 
@@ -71,8 +80,24 @@ python3 -m http.server 8080
 
 ## 数据说明
 
-所有数据均存储在用户设备本地的 IndexedDB 中，不会上传到任何服务器。  
-如需跨设备同步，请使用「设置 → GitHub Gist 同步」，数据以**私有 Gist** 形式存储在你的 GitHub 账户下（明文 JSON，仅你可见，未经加密）。
+账本默认存储在用户设备本地的 IndexedDB 中。以下功能会产生外部数据传输：
+
+- 使用 GitHub Gist 同步时，账本会以**未经加密的 JSON** 上传到你的私有 Gist；Token 会作为授权信息发送至 GitHub API。
+- 使用 GPS 地点查询时，精确经纬度会发送给 OpenStreetMap Nominatim 进行反向地理编码。
+
+同步 Token 默认只保存在当前浏览器会话；只有主动勾选“记住 Token”后才会长期保存在本设备。恢复 JSON 或云端数据前，应用会验证格式并创建本地自动恢复点，再通过单个 IndexedDB 事务替换数据。
+
+完整说明见 [PRIVACY.md](PRIVACY.md)。
+
+## 自动化测试
+
+```bash
+npm ci
+npx playwright install chromium
+npm test
+```
+
+每次推送和 Pull Request 都会由 GitHub Actions 执行静态资源检查、备份迁移测试和移动端浏览器回归测试。
 
 ## 后续优化方向
 

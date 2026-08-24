@@ -17,7 +17,7 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 
   <!-- 样式（独立文件，可被 SW 长期缓存）-->
-  <link rel="stylesheet" href="app.css?v=20260824.1">
+  <link rel="stylesheet" href="app.css?v=1.2.0">
 
   <!-- Chart.js：defer 加载，不阻塞首屏 -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
@@ -454,6 +454,24 @@
       <span class="s-arrow">›</span>
     </div>
 
+    <!-- 自动恢复点 -->
+    <div class="setting-item" onclick="App.restoreLatestSnapshot()">
+      <div class="left">
+        <span class="s-icon">🛟</span>
+        <span class="s-label">恢复上次自动备份</span>
+      </div>
+      <span class="s-arrow">›</span>
+    </div>
+
+    <!-- 隐私说明 -->
+    <div class="setting-item" onclick="App.showPrivacyNotice()">
+      <div class="left">
+        <span class="s-icon">🔐</span>
+        <span class="s-label">隐私与数据说明</span>
+      </div>
+      <span class="s-arrow">›</span>
+    </div>
+
     <!-- 清空 -->
     <div class="setting-item" onclick="App.clearAll()">
       <div class="left">
@@ -486,6 +504,22 @@
     </div>
     <button class="btn btn-outline" style="margin-top:8px"
             onclick="App.closeModal('userModal')">关闭</button>
+  </div>
+</div>
+
+<!-- 隐私说明弹窗 -->
+<div class="modal-overlay" id="privacyModal"
+     role="dialog" aria-modal="true" aria-label="隐私与数据说明">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">🔐 隐私与数据说明</div>
+    <div style="font-size:13px;line-height:1.75;color:var(--text2)">
+      <p><b>默认本地保存：</b>账本、分类和设置保存在当前设备的 IndexedDB，不会自动上传。</p>
+      <p><b>Gist 同步：</b>只有你主动上传或下载时，账本才会以未经加密的 JSON 传输到你的私有 GitHub Gist。</p>
+      <p><b>Token：</b>默认只保存到本次浏览器会话；勾选“记住 Token”后才会长期保存在本设备，可随时清除。</p>
+      <p><b>位置：</b>只有你主动点击定位并确认后，精确经纬度才会发送给 OpenStreetMap Nominatim 查询地点名称。</p>
+    </div>
+    <button class="btn btn-outline" onclick="App.closeModal('privacyModal')">知道了</button>
   </div>
 </div>
 
@@ -799,7 +833,12 @@
     <div class="form-group">
       <label class="form-label" for="syncToken">GitHub Personal Access Token</label>
       <input class="form-input" type="password" id="syncToken"
-             placeholder="ghp_xxxx（需要 gist 权限）">
+             placeholder="ghp_xxxx（需要 gist 权限）"
+             autocomplete="off" autocapitalize="none" spellcheck="false">
+      <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px;color:var(--text2)">
+        <input type="checkbox" id="rememberSyncToken">
+        记住 Token（长期保存在这台设备）
+      </label>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:8px">
       <button class="btn btn-primary" style="flex:1"
@@ -807,11 +846,13 @@
       <button class="btn btn-outline" style="flex:1"
               onclick="App.pullSync()">⬇️ 下载</button>
     </div>
+    <button class="btn btn-outline" style="margin-bottom:8px"
+            onclick="App.clearSyncToken()">清除本机 Token</button>
     <button class="btn btn-outline"
             onclick="App.closeModal('syncModal')">关闭</button>
     <p style="font-size:11px;color:var(--text3);margin-top:12px;line-height:1.6">
-      数据将以私有 Gist 形式存储在你的 GitHub 账户下，仅你可见。
-      Token 只存储在本地 localStorage，不会上传到任何服务器。
+      同步时，账本数据会以未经加密的 JSON 上传到你的私有 Gist，Token 会作为授权信息发送至 GitHub API。
+      默认仅在本次浏览器会话保存 Token；勾选“记住”后才会长期保存在本设备。
     </p>
   </div>
 </div>
@@ -832,7 +873,7 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <!-- 应用逻辑（独立文件，可被 SW 长期缓存）-->
-<script src="app.js?v=20260824.1" defer></script>
+<script src="app.js?v=1.2.0" defer></script>
 
 </body>
 </html>

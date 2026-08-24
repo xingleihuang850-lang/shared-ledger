@@ -1,0 +1,13 @@
+{
+  "name": "shared-ledger",
+  "version": "1.2.0",
+  "private": true,
+  "description": "Shared Ledger PWA regression tests",
+  "scripts": {
+    "check": "node tests/static-check.mjs",
+    "test": "npm run check && playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}
