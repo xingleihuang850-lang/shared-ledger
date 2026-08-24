@@ -1,9 +1,4 @@
 const { defineConfig, devices } = require('@playwright/test');
-const { existsSync } = require('node:fs');
-
-const macChrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ||
-  (process.platform === 'darwin' && existsSync(macChrome) ? macChrome : undefined);
 
 module.exports = defineConfig({
   testDir: './tests',
@@ -15,7 +10,6 @@ module.exports = defineConfig({
   use: {
     baseURL: 'http://127.0.0.1:4173',
     trace: 'on-first-retry',
-    launchOptions: executablePath ? { executablePath } : {},
   },
   projects: [
     {

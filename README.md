@@ -97,7 +97,7 @@ npx playwright install chromium
 npm test
 ```
 
-每次推送和 Pull Request 都会由 GitHub Actions 执行静态资源检查、备份迁移测试和移动端浏览器回归测试。
+测试默认使用 Playwright 独立管理的无头 Chromium，不会调用或干扰电脑上日常使用的 Google Chrome。每次推送和 Pull Request 都会由 GitHub Actions 执行静态资源检查、备份迁移测试和移动端浏览器回归测试。
 
 ## 后续优化方向
 
