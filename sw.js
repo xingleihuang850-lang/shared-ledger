@@ -1,11 +1,17 @@
-const CACHE = 'ledger-v6';
+const CACHE = 'ledger-v7-20260824';
 // 预缓存核心静态资源，确保离线可用
 const ASSETS = [
   './',
   './index.html',
   './app.css',
+  './app.css?v=20260824.1',
   './app.js',
+  './app.js?v=20260824.1',
   './manifest.json',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+  './icons/maskable-512.png',
+  './icons/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', e => {
@@ -22,6 +28,7 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET') return;
   const url = e.request.url;
 
   // CDN 资源：缓存优先
@@ -45,19 +52,23 @@ self.addEventListener('fetch', e => {
           c.put(e.request, res.clone());
           return res;
         });
-      }).catch(() => caches.match(e.request))
+      }).catch(() =>
+        caches.match(e.request).then(r => r || caches.match('./index.html') || caches.match('./'))
+      )
     );
     return;
   }
 
-  // 其他静态资源：缓存优先
+  // 本站静态资源：网络优先，离线时回退缓存。
+  // 这样即使文件名不变，发布后的 app.js/app.css 也能在下次启动时更新。
   e.respondWith(
-    caches.match(e.request).then(r => r || fetch(e.request).then(res => {
+    fetch(e.request).then(res => {
+      if (!res || !res.ok) return res;
       return caches.open(CACHE).then(c => {
         c.put(e.request, res.clone());
         return res;
       });
-    }))
+    }).catch(() => caches.match(e.request))
   );
 });
 

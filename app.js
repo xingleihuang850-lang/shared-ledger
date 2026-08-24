@@ -323,6 +323,7 @@ const App = {
   yearSummary:  { year: new Date().getFullYear() },
   trendChart:   null,
   pieChart:     null,
+  installPromptEvent: null,
 
   // ----- 高级搜索状态 -----
   searchState: {
@@ -354,6 +355,7 @@ const App = {
       await this.render();
       this.typewriter('共享账本');
       this.switchPage('home', document.querySelector('.nav-btn[data-page="home"]'));
+      this.updateInstallUI();
     } catch (err) {
       console.error('初始化失败', err);
       alert('应用启动失败，请刷新页面重试。\n错误：' + (err && err.message || err));
@@ -404,6 +406,56 @@ const App = {
     if (!isDark) {
       Particles.particles.forEach(p => { p.vx *= -1; p.vy *= -1; });
     }
+  },
+
+  // ======================== PWA 安装与更新 ========================
+  isStandalone() {
+    return window.matchMedia('(display-mode: standalone)').matches ||
+      window.navigator.standalone === true;
+  },
+
+  isIOS() {
+    return /iphone|ipad|ipod/i.test(navigator.userAgent);
+  },
+
+  updateInstallUI() {
+    const label = document.getElementById('installAppLabel');
+    const hint  = document.getElementById('installAppHint');
+    if (!label || !hint) return;
+    if (this.isStandalone()) {
+      label.textContent = '共享账本已安装';
+      hint.textContent  = '每次打开都会自动检查更新';
+    } else {
+      label.textContent = '安装到手机';
+      hint.textContent  = this.installPromptEvent
+        ? '点击即可安装，后续自动更新'
+        : '安装后可离线使用并自动更新';
+    }
+  },
+
+  async installApp() {
+    if (this.isStandalone()) {
+      this.toast('✅ 已安装，应用会自动更新');
+      return;
+    }
+
+    if (this.installPromptEvent) {
+      const promptEvent = this.installPromptEvent;
+      this.installPromptEvent = null;
+      await promptEvent.prompt();
+      const choice = await promptEvent.userChoice;
+      this.updateInstallUI();
+      this.toast(choice.outcome === 'accepted' ? '✅ 安装完成' : '已取消安装');
+      return;
+    }
+
+    const text = document.getElementById('installGuideText');
+    if (this.isIOS()) {
+      text.innerHTML = '<b>iPhone / iPad：</b><br>请使用 Safari 打开本页面，点击底部“分享”按钮，然后选择“添加到主屏幕”。';
+    } else {
+      text.innerHTML = '<b>Android：</b><br>请使用 Chrome 打开本页面，点击右上角菜单，选择“安装应用”或“添加到主屏幕”。';
+    }
+    this.openModal('installGuideModal');
   },
 
   // ======================== 特效 ========================
@@ -2533,11 +2585,36 @@ document.addEventListener('click', e => {
 });
 
 // ======================== 启动 ========================
+// 内联按钮通过 window.App 调用，显式暴露可避免不同浏览器的全局词法作用域差异。
+window.App = App;
+
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  App.installPromptEvent = e;
+  App.updateInstallUI();
+});
+
+window.addEventListener('appinstalled', () => {
+  App.installPromptEvent = null;
+  App.updateInstallUI();
+  App.toast('✅ 共享账本已安装');
+});
+
 App.init();
 
 // ======================== PWA Service Worker ========================
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloading) return;
+      reloading = true;
+      window.location.reload();
+    });
+
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
+      .then(reg => reg.update())
+      .catch(err => console.warn('Service Worker 注册失败', err));
   });
 }
