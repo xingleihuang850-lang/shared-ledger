@@ -1,8 +1,6 @@
 const { test, expect } = require('@playwright/test');
 
 test.beforeEach(async ({ page }) => {
-  // Keep the month filter aligned with the dated transaction fixtures.
-  await page.clock.setFixedTime(new Date('2026-08-24T12:00:00+08:00'));
   await page.route('https://cdn.jsdelivr.net/**', route => route.abort());
   await page.goto('/');
   await expect(page.locator('#currentUserName')).toHaveText('我');
@@ -67,6 +65,8 @@ test('手机端新增后可以通过应用内弹窗删除', async ({ page }) => 
 
 test('删除失败会保留编辑窗口并显示具体原因', async ({ page }) => {
   await page.evaluate(async () => {
+    // Match the visible month to this test's transaction fixture.
+    App.currentMonth = { year: 2026, month: 8 };
     await dbPut('transactions', {
       id: 'delete-failure', type: 'expense', amount: 9.99, date: '2026-08-24',
       categoryId: 'e1', categoryName: '餐饮', categoryIcon: '🍜', note: '删除失败测试',
