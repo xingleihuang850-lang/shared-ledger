@@ -77,14 +77,16 @@ python3 -m http.server 8080
 ## 安装到手机
 
 - **Android PWA**：使用支持 PWA 安装的浏览器打开在线地址，点击应用内“设置 → 安装到手机”，或在浏览器菜单中选择“安装应用”。
-- **Android APK（Android 6.0 及以上）**：前往 [GitHub Releases](https://github.com/xingleihuang850-lang/shared-ledger/releases/latest) 下载 `shared-ledger-android-v*.apk`。首次侧载时，Android 可能要求允许当前浏览器或文件管理器“安装未知应用”。
+- **Android APK（Android 6.0 及以上）**：[直接下载共享账本 v1.2.2 APK](https://github.com/xingleihuang850-lang/shared-ledger/releases/download/v1.2.2/shared-ledger-android-v1.2.2.apk)。下载后直接打开 `.apk` 文件，按系统提示安装；首次安装时可能需要允许当前浏览器或文件管理器“安装未知应用”。安装后桌面显示“账本”图标，首次打开请联网。ZIP 文件用于网页部署与源码查看。
 - **iPhone / iPad**：使用 Safari 打开在线地址，点击“分享 → 添加到主屏幕”。
 
 PWA 与 APK 使用同一在线应用和 IndexedDB 本地数据。网页功能更新会在联网启动时通过 Service Worker 自动获取；涉及 Android 原生外壳、权限或依赖的更新会发布新的正式签名 APK，需要从 Releases 下载并覆盖安装。请始终从本仓库 Releases 获取 APK，并核对同一 Release 中的 `SHA256SUMS.txt`。
 
 ## Android 自动发布
 
-推送形如 `v1.2.2` 的版本标签后，GitHub Actions 会自动：
+自动发布需要先配置仓库 Actions Secrets：`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS` 和 `ANDROID_KEY_PASSWORD`。签名凭据也可以保留在本机，按 `android/README.md` 构建后，将签名 APK 上传到 Releases。
+
+配置自动发布后，推送形如 `v1.2.2` 的版本标签，GitHub Actions 会自动：
 
 1. 从仓库加密 Secrets 恢复发布签名；
 2. 使用 Gradle 构建正式签名 APK；

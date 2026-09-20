@@ -33,7 +33,7 @@ for (const asset of precached) {
 assert.match(read('app.js'), /const APP_VERSION = '1\.2\.2'/);
 assert.match(read('app.js'), /const BACKUP_FORMAT_VERSION = 2/);
 assert.match(html, /app\.js\?v=1\.2\.2/);
-assert.match(sw, /ledger-v10-20260824/);
+assert.match(sw, /ledger-v11-20260920/);
 assert.ok(existsSync(join(root, 'android', 'gradlew')), '缺少 Android Gradle Wrapper');
 assert.ok(existsSync(join(root, '.github', 'workflows', 'android-release.yml')), '缺少 Android Release 工作流');
 const twaManifest = JSON.parse(read('android/twa-manifest.json'));

@@ -651,7 +651,7 @@ const App = {
     if (this.isIOS()) {
       text.innerHTML = '<b>iPhone / iPad：</b><br>请使用 Safari 打开本页面，点击底部“分享”按钮，然后选择“添加到主屏幕”。';
     } else {
-      text.innerHTML = '<b>Android 有两种安装方式：</b><br>① 使用支持 PWA 的浏览器选择“安装应用”或“添加到主屏幕”；<br>② 从 GitHub Releases 下载正式签名 APK。APK 安装后仍会打开同一在线账本，联网启动即可使用最新网页版本。';
+      text.innerHTML = '<b>Android 安装：</b><br>点击下方按钮下载 APK，下载完成后直接打开文件，按系统提示允许安装。安装后桌面会显示“账本”图标，首次打开请联网。<br><br>也可以使用浏览器菜单中的“安装应用”或“添加到主屏幕”。';
     }
     this.openModal('installGuideModal');
   },

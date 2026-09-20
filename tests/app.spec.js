@@ -1,6 +1,8 @@
 const { test, expect } = require('@playwright/test');
 
 test.beforeEach(async ({ page }) => {
+  // Keep the month filter aligned with the dated transaction fixtures.
+  await page.clock.setFixedTime(new Date('2026-08-24T12:00:00+08:00'));
   await page.route('https://cdn.jsdelivr.net/**', route => route.abort());
   await page.goto('/');
   await expect(page.locator('#currentUserName')).toHaveText('我');
@@ -12,6 +14,19 @@ test('六个底部页面都可以切换', async ({ page }) => {
     await expect(page.locator(`#page-${name}`)).toHaveClass(/active/);
     await expect(page.locator(`.nav-btn[data-page="${name}"]`)).toHaveClass(/active/);
   }
+});
+
+test('浏览器未提供安装提示时可以直接下载当前版本 APK', async ({ page }) => {
+  await page.evaluate(() => { App.installPromptEvent = null; });
+  await page.locator('.nav-btn[data-page="settings"]').click();
+  await page.getByText('安装到手机', { exact: true }).click();
+  await expect(page.locator('#installGuideModal')).toHaveClass(/show/);
+  const version = require('../package.json').version;
+  await expect(page.getByRole('link', { name: '下载 Android APK' })).toHaveAttribute(
+    'href',
+    `https://github.com/xingleihuang850-lang/shared-ledger/releases/download/v${version}/shared-ledger-android-v${version}.apk`,
+  );
+  await expect(page.locator('#installGuideText')).toContainText('下载完成后直接打开文件');
 });
 
 test('手机端可以新增一笔支出', async ({ page }) => {
