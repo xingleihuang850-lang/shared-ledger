@@ -1,12 +1,12 @@
-const CACHE = 'ledger-v11-20260920';
+const CACHE = 'ledger-v12-20260920';
 // 预缓存核心静态资源，确保离线可用
 const ASSETS = [
   './',
   './index.html',
   './app.css',
-  './app.css?v=1.2.2',
+  './app.css?v=1.2.3',
   './app.js',
-  './app.js?v=1.2.2',
+  './app.js?v=1.2.3',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',

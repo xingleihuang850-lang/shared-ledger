@@ -192,3 +192,39 @@ test('Token 默认只保存到会话，可主动清除', async ({ page }) => {
   await page.getByRole('button', { name: '清除本机 Token' }).click();
   expect(await page.evaluate(() => sessionStorage.getItem('ledgerSyncToken'))).toBeNull();
 });
+
+for (const [code, message] of [[1, '定位权限未获允许'], [2, '暂时无法获取位置'], [3, '定位等待超时']]) {
+  test(`定位错误 ${code} 显示对应指引并允许重试`, async ({ page }) => {
+    await page.evaluate(code => {
+      localStorage.setItem('ledgerLocationDisclosure', 'accepted');
+      navigator.geolocation.getCurrentPosition = (_, failure) => failure({ code, message: 'Provider error' });
+    }, code);
+    await page.locator('.nav-btn[data-page="add"]').click();
+    await page.locator('#gpsBtn').click();
+    await expect(page.locator('#locHint')).toContainText(message);
+    await expect(page.locator('#locHint')).toContainText(`错误 ${code}`);
+    await expect(page.locator('#gpsBtn')).toBeEnabled();
+    await expect(page.locator('#addLat')).toHaveValue('');
+    await expect(page.locator('#addLng')).toHaveValue('');
+  });
+}
+
+test('定位成功后保留坐标，地点名称服务不可用也能记账', async ({ page, context }) => {
+  await context.grantPermissions(['geolocation']);
+  await context.setGeolocation({ latitude: 0, longitude: 0, accuracy: 8 });
+  await page.route('https://nominatim.openstreetmap.org/**', route => route.abort());
+  await page.evaluate(() => localStorage.setItem('ledgerLocationDisclosure', 'accepted'));
+  await page.locator('.nav-btn[data-page="add"]').click();
+  await page.locator('#gpsBtn').click();
+  await expect(page.locator('#addLat')).toHaveValue('0.000000');
+  await expect(page.locator('#addLng')).toHaveValue('0.000000');
+  await expect(page.locator('#locHint')).toContainText('精度 ±8m');
+  await expect(page.locator('#gpsBtn')).toBeEnabled();
+  await page.locator('#addAmount').fill('1');
+  await page.locator('#catGrid .cat-chip').first().click();
+  await page.locator('#saveBtn').click();
+  await expect(page.locator('#page-home')).toHaveClass(/active/);
+  const transactions = await page.evaluate(() => dbGetAll('transactions'));
+  expect(transactions).toHaveLength(1);
+  expect(transactions[0]).toMatchObject({ lat: 0, lng: 0 });
+});

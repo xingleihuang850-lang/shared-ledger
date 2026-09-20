@@ -70,8 +70,8 @@ android {
         applicationId "com.xingleihuang.sharedledger"
         minSdkVersion 23
         targetSdkVersion 36
-        versionCode 10202
-        versionName "1.2.2"
+        versionCode 10203
+        versionName "1.2.3"
 
         // The name for the application
         resValue "string", "appName", twaManifest.name
@@ -140,10 +140,6 @@ android {
         // Defines a provider authority for the Splash Screen
         resValue "string", "providerAuthority", twaManifest.applicationId + '.fileprovider'
 
-        // The enableNotification resource is used to enable or disable the
-        // TrustedWebActivityService, by changing the android:enabled and android:exported
-        // attributes
-        resValue "bool", "enableNotification", twaManifest.enableNotifications.toString()
 
         twaManifest.shortcuts.eachWithIndex { shortcut, index ->
             resValue "string", "shortcut_name_$index", "$shortcut.name"

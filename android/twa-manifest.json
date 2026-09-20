@@ -20,8 +20,8 @@
     "path": "release.keystore",
     "alias": "shared-ledger"
   },
-  "appVersionName": "1.2.2",
-  "appVersionCode": 10202,
+  "appVersionName": "1.2.3",
+  "appVersionCode": 10203,
   "shortcuts": [],
   "generatorApp": "bubblewrap-cli",
   "webManifestUrl": "https://xingleihuang850-lang.github.io/shared-ledger/manifest.json",
@@ -52,5 +52,5 @@
     "standalone",
     "minimal-ui"
   ],
-  "appVersion": "1.2.2"
+  "appVersion": "1.2.3"
 }

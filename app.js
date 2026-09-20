@@ -6,7 +6,7 @@
 // ======================== 常量 ========================
 const DB_NAME = 'sharedLedger';
 const DB_VER  = 7;   // v7: 新增 snapshots store，用于恢复前自动快照
-const APP_VERSION = '1.2.2';
+const APP_VERSION = '1.2.3';
 const BACKUP_FORMAT_VERSION = 2;
 const DATA_STORES = [
   'transactions', 'categories', 'users', 'settings',
@@ -2235,9 +2235,11 @@ const App = {
     }
     const btn  = document.getElementById('gpsBtn');
     const hint = document.getElementById('locHint');
+    if (btn.disabled) return;
     btn.textContent = '⏳';
     btn.disabled    = true;
     hint.textContent = '定位中…';
+    hint.style.color = 'var(--text2)';
 
     navigator.geolocation.getCurrentPosition(
       pos => {
@@ -2262,12 +2264,17 @@ const App = {
           .catch(() => {});
       },
       err => {
-        hint.textContent = '定位失败：' + (err.message || '未知错误');
+        const messages = {
+          1: '定位权限未获允许（错误 1）。App 用户请在系统设置中允许“账本”使用位置信息；网页用户请检查 Chrome 和本站的位置权限。',
+          2: '暂时无法获取位置（错误 2）。请开启手机定位服务，移到窗边或室外后重试。',
+          3: '定位等待超时（错误 3）。首次定位可能较慢，请移到窗边或室外后重试。',
+        };
+        hint.textContent = messages[err.code] || '定位失败：' + (err.message || '未知错误');
         hint.style.color = 'var(--danger)';
         btn.textContent  = '📍';
         btn.disabled     = false;
       },
-      { timeout: 10000, maximumAge: 30000 }
+      { enableHighAccuracy: true, timeout: 30000, maximumAge: 30000 }
     );
   },
 
